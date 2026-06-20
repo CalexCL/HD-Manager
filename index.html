@@ -26,7 +26,7 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.06.21-01:00";
+const APP_VERSION = "HD System v.2026.06.21-01:15";
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -214,6 +214,7 @@ function LoginScreen({onLogin}){
 // ── GOOGLE DRIVE SAVE ──
 function useGoogleDrive(){
   const [ready,setReady]=useState(false);
+  const [initFailed,setInitFailed]=useState(false);
   const [signedIn,setSignedIn]=useState(false);
   const [account,setAccount]=useState(null);
   const tokenClient=useRef(null);
@@ -221,11 +222,14 @@ function useGoogleDrive(){
   const pendingResolve=useRef(null);
 
   useEffect(()=>{
-    const check=setInterval(()=>{
+    let cancelled=false;
+    const tryInit=()=>{
+      if(cancelled)return;
       if(window.google&&window.google.accounts&&window.gapi){
-        clearInterval(check);
         window.gapi.load("client",()=>{
+          if(cancelled)return;
           window.gapi.client.init({}).then(()=>{
+            if(cancelled)return;
             tokenClient.current=window.google.accounts.oauth2.initTokenClient({
               client_id:GOOGLE_CLIENT_ID,
               scope:DRIVE_SCOPE,
@@ -249,12 +253,24 @@ function useGoogleDrive(){
               }
             });
             setReady(true);
-          }).catch(e=>{setReady(false);console.error("Drive init failed",e);});
+          }).catch(e=>{setInitFailed(true);console.error("Drive init failed",e);});
         });
+        return true;
       }
-    },300);
-    const timeout=setTimeout(()=>clearInterval(check),15000);
-    return ()=>{clearInterval(check);clearTimeout(timeout);};
+      return false;
+    };
+
+    // Poll every 300ms for up to 20s for the Google scripts to finish loading.
+    // Unlike before, if this window elapses without success, we now explicitly
+    // surface a failure state instead of leaving tokenClient permanently null
+    // with no feedback to the user.
+    if(tryInit())return;
+    const check=setInterval(()=>{ if(tryInit())clearInterval(check); },300);
+    const timeout=setTimeout(()=>{
+      clearInterval(check);
+      if(!tokenClient.current){setInitFailed(true);}
+    },20000);
+    return ()=>{cancelled=true;clearInterval(check);clearTimeout(timeout);};
   },[]);
 
   // Returns a promise that resolves once the popup completes (success or failure),
@@ -264,7 +280,13 @@ function useGoogleDrive(){
   const ensureSignedIn=(forcePicker)=>{
     return new Promise((resolve)=>{
       if(accessToken.current&&!forcePicker){resolve({ok:true});return;}
-      if(!tokenClient.current){resolve({ok:false,reason:"Google sign-in is still loading. Please wait a moment and try again."});return;}
+      if(!tokenClient.current){
+        const msg=initFailed
+          ?"Google sign-in failed to load. This usually means a browser extension (ad-blocker/privacy blocker) is blocking Google's scripts, or you're offline. Try disabling blockers for this site, or use a different browser, then reload the page."
+          :"Google sign-in is still loading. Please wait a few seconds and try again.";
+        resolve({ok:false,reason:msg});
+        return;
+      }
       pendingResolve.current=resolve;
       try{tokenClient.current.requestAccessToken({prompt:forcePicker?"select_account":"consent"});}
       catch(e){pendingResolve.current=null;resolve({ok:false,reason:e.message});}
@@ -341,7 +363,7 @@ function useGoogleDrive(){
     }
   };
 
-  return{ready,signedIn,account,uploadToDrive,listDriveFiles,downloadDriveFile,switchAccount};
+  return{ready,initFailed,signedIn,account,uploadToDrive,listDriveFiles,downloadDriveFile,switchAccount};
 }
 
 // ── INVOICE PDF ──
@@ -1422,6 +1444,10 @@ function BackupRestore({db,refresh,actor,onHome}){
             <button onClick={switchGoogleAccount} disabled={driveBusy} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Switch account</button>
           </div>
           :<div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Saves directly into your team's shared Drive folder. First use will ask you to sign in — make sure to pick the correct Google account if you have more than one.</div>}
+        {drive.initFailed&&<div style={{background:"#fee2e2",border:"1px solid #fecaca",borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:11,color:"#dc2626"}}>
+          ⚠ Google sign-in failed to load. This usually means a browser extension (ad-blocker/privacy blocker) is blocking Google's scripts, or you're offline. Try disabling blockers for this site, or use a different browser, then reload the page.
+        </div>}
+        {!drive.ready&&!drive.initFailed&&<div style={{fontSize:11,color:"var(--muted)",marginBottom:10}}>⏳ Connecting to Google services...</div>}
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button onClick={saveToDriveCSV} disabled={driveBusy} style={{...btn("blue"),opacity:driveBusy?0.6:1}}>☁ CSV to Drive</button>
           <button onClick={saveToDriveJSON} disabled={driveBusy} style={{...btn("blue"),opacity:driveBusy?0.6:1}}>☁ JSON to Drive</button>
