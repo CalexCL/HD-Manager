@@ -26,10 +26,10 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.06.21-00:45";
+const APP_VERSION = "HD System v.2026.06.21-01:00";
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.file";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 
 // ── STORAGE ──
 const DB_KEY="happyDino_v1";
@@ -1465,7 +1465,7 @@ function BackupRestore({db,refresh,actor,onHome}){
     {driveStatus&&<div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 14px",fontSize:12,color:"var(--text)",marginBottom:16}}>{driveStatus}</div>}
 
     <div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px",fontSize:11,color:"var(--muted)"}}>
-      ℹ️ Google Drive save/load requires this app to be hosted online (e.g. GitHub Pages) with your domain authorized in Google Cloud Console. It will not work when opening this file directly from your computer. If a sign-in popup doesn't appear, check that your browser isn't blocking popups for this site. If a save reports success but the file isn't visible in your folder, use "Switch account" above to confirm you're signed into the same Google account that owns the target Drive folder — saves go to whichever account was used to sign in.
+      ℹ️ Google Drive save/load requires this app to be hosted online (e.g. GitHub Pages) with your domain authorized in Google Cloud Console. It will not work when opening this file directly from your computer. If a sign-in popup doesn't appear, check that your browser isn't blocking popups for this site. If a save reports success but the file isn't visible in your folder, use "Switch account" above to confirm you're signed into the same Google account that owns the target Drive folder — saves go to whichever account was used to sign in. For privacy, this app only requests access to files it creates itself (not your whole Drive) — so "Browse Drive Backups" will only list backups previously saved by this app, not pre-existing files placed into the folder another way.
     </div>
   </div>;
 }
