@@ -3,10 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🦕 Happy Dino Xperience Camp</title>
+<title>Happy Dino Xperience Camp</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js"></script>
 <style>
 :root{--accent:#16a34a;--bg:#f8fafc;--surface:#fff;--surface2:#f1f5f9;--border:#e2e8f0;--text:#1e293b;--muted:#64748b}
 @media(prefers-color-scheme:dark){:root{--bg:#0f172a;--surface:#1e293b;--surface2:#0f172a;--border:#334155;--text:#f1f5f9;--muted:#94a3b8}}
@@ -19,7 +21,15 @@ input,select,textarea{font-family:inherit;font-size:14px}
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const {useState,useEffect,useCallback}=React;
+const {useState,useEffect,useCallback,useRef}=React;
+
+// ============================================================
+// CONFIG
+// ============================================================
+const APP_VERSION = "HD System v.2026.06.20-19:00";
+const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
+const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 
 // ── STORAGE ──
 const DB_KEY="happyDino_v1";
@@ -27,23 +37,43 @@ const loadDB=()=>{try{return JSON.parse(localStorage.getItem(DB_KEY)||"{}");}cat
 const saveDB=(db)=>localStorage.setItem(DB_KEY,JSON.stringify(db));
 const initialDB={
   settings:{companyName:"Happy Dino Xperience Camp",logo:"",address:"",tin:"",phone:"",email:""},
-  users:[{id:"u1",name:"Admin",role:"admin",pin:"1234"},{id:"u2",name:"Finance",role:"finance",pin:"5678"},{id:"u3",name:"Crew Lead",role:"crew",pin:"0000"}],
-  schools:[],students:[],campTypes:[],sessions:[],registrations:[],crew:[],crewAssignments:[],payments:[],expenses:[],inventory:[],communications:[]
+  users:[
+    {id:"u1",name:"Admin",role:"admin",password:"@555*123"},
+    {id:"u2",name:"Finance",role:"finance",password:"@555*$*"},
+    {id:"u3",name:"User",role:"user",password:"@123*"}
+  ],
+  schools:[],students:[],campTypes:[],sessions:[],registrations:[],crew:[],crewAssignments:[],payments:[],expenses:[],inventory:[],communications:[],auditLog:[]
 };
 function getDB(){const s=loadDB();return{...initialDB,...s};}
 function setDB(partial){const db=getDB();saveDB({...db,...partial});}
+
+// ── AUDIT LOG ──
+function logAction(actorRole,actorName,action,detail){
+  const db=getDB();
+  const entry={id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),ts:new Date().toISOString(),role:actorRole,name:actorName,action,detail};
+  const log=[...(db.auditLog||[]),entry].slice(-500); // keep last 500
+  setDB({auditLog:log});
+}
 
 // ── HELPERS ──
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const fmt=(n)=>`RM ${parseFloat(n||0).toFixed(2)}`;
 const fmtDate=(d)=>d?new Date(d).toLocaleDateString("en-MY",{day:"2-digit",month:"short",year:"numeric"}):"—";
+const fmtDateTime=(d)=>d?new Date(d).toLocaleString("en-MY",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—";
 const calcAge=(dob)=>{if(!dob)return"—";return Math.floor((Date.now()-new Date(dob).getTime())/(1000*60*60*24*365.25));};
 
 // ── STYLE HELPERS ──
 const inp={width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:8,background:"var(--bg)",color:"var(--text)",fontSize:14,boxSizing:"border-box",outline:"none"};
 const btn=(v="primary")=>({padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:600,fontSize:13,
-  background:v==="primary"?"var(--accent)":v==="danger"?"#ef4444":"var(--surface2)",
+  background:v==="primary"?"var(--accent)":v==="danger"?"#ef4444":v==="blue"?"#2563eb":"var(--surface2)",
   color:v==="ghost"?"var(--text)":"#fff"});
+
+const ROLE_COLORS={admin:{bg:"#ede9fe",text:"#7c3aed",label:"ADMIN"},finance:{bg:"#dbeafe",text:"#2563eb",label:"FINANCE"},user:{bg:"#dcfce7",text:"#16a34a",label:"USER"}};
+
+function RoleBadge({role}){
+  const r=ROLE_COLORS[role]||ROLE_COLORS.user;
+  return <span style={{display:"inline-block",padding:"3px 10px",borderRadius:99,fontSize:11,fontWeight:800,background:r.bg,color:r.text,letterSpacing:"0.04em"}}>{r.label}</span>;
+}
 
 function Badge({label,color}){
   const c={green:"#16a34a",amber:"#d97706",red:"#dc2626",blue:"#2563eb",purple:"#7c3aed",gray:"#6b7280"};
@@ -58,7 +88,7 @@ function Field({label,children,hint}){
   </div>;
 }
 function StatCard({label,value,color,onClick}){
-  return <div onClick={onClick} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"16px 18px",borderLeft:`4px solid ${color||"var(--accent)"}`,cursor:onClick?"pointer":"default",transition:"box-shadow 0.15s",boxShadow:onClick?"0 0 0 0 transparent":"none"}}
+  return <div onClick={onClick} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"16px 18px",borderLeft:`4px solid ${color||"var(--accent)"}`,cursor:onClick?"pointer":"default"}}
     onMouseEnter={e=>{if(onClick)e.currentTarget.style.boxShadow="0 4px 16px rgba(0,0,0,0.10)";}}
     onMouseLeave={e=>{e.currentTarget.style.boxShadow="none";}}>
     <div style={{fontSize:20,fontWeight:800,color:color||"var(--accent)"}}>{value}</div>
@@ -80,32 +110,133 @@ function Modal({title,onClose,children,wide}){
   </div>;
 }
 
+// ── BREADCRUMB + BACK BUTTON ──
+// crumbs: array of strings, or {label, nav} objects for clickable crumbs.
+// onBack: explicit back handler for drilled-into sub-pages (e.g. Students-under-School).
+// onHome: fallback handler (usually navigate("dashboard")) used when no onBack is given,
+//         so every page — top-level or nested — always has a working back button.
+function PageHeader({crumbs,onBack,onHome,title,action}){
+  const goBack=onBack||onHome;
+  return <div style={{marginBottom:18}}>
+    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+      {goBack&&<button onClick={goBack} style={{...btn("ghost"),padding:"6px 12px",fontSize:12}}>← Back</button>}
+      {crumbs&&crumbs.length>0&&<div style={{fontSize:11,color:"var(--muted)"}}>
+        {crumbs.map((c,i)=>{
+          const item=typeof c==="string"?{label:c,nav:null}:c;
+          const isLast=i===crumbs.length-1;
+          return <span key={i}>
+            {i>0&&" / "}
+            <span onClick={item.nav&&!isLast?item.nav:undefined}
+              style={{fontWeight:isLast?700:400,color:isLast?"var(--text)":"var(--accent)",cursor:item.nav&&!isLast?"pointer":"default",textDecoration:item.nav&&!isLast?"underline":"none"}}>
+              {item.label}
+            </span>
+          </span>;
+        })}
+      </div>}
+    </div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+      <h2 style={{fontSize:20,fontWeight:800}}>{title}</h2>
+      {action}
+    </div>
+  </div>;
+}
+
 // ── AUTH ──
 function useAuth(){
   const [user,setUser]=useState(null);
-  const login=(pin)=>{const db=getDB();const found=db.users.find(u=>u.pin===pin);if(found){setUser(found);return true;}return false;};
-  const logout=()=>setUser(null);
+  const login=(password)=>{const db=getDB();const found=db.users.find(u=>u.password===password);if(found){setUser(found);logAction(found.role,found.name,"LOGIN",`${found.name} logged in`);return true;}return false;};
+  const logout=()=>{if(user)logAction(user.role,user.name,"LOGOUT",`${user.name} logged out`);setUser(null);};
   return{user,login,logout};
 }
 
 // ── LOGIN ──
 function LoginScreen({onLogin}){
-  const [pin,setPin]=useState("");const [err,setErr]=useState("");
-  const handle=()=>{if(!onLogin(pin)){setErr("Invalid PIN");setPin("");}};
+  const [password,setPassword]=useState("");
+  const [err,setErr]=useState("");
+  const [detectedRole,setDetectedRole]=useState(null);
+  useEffect(()=>{
+    const db=getDB();
+    const found=db.users.find(u=>u.password===password);
+    setDetectedRole(found?found.role:null);
+  },[password]);
+  const handle=()=>{if(!onLogin(password)){setErr("Invalid password");setPassword("");setDetectedRole(null);}};
+  const r=detectedRole?ROLE_COLORS[detectedRole]:null;
   return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)"}}>
-    <div style={{textAlign:"center",width:300}}>
+    <div style={{textAlign:"center",width:320}}>
       <div style={{fontSize:52,marginBottom:6}}>🦕</div>
       <div style={{fontSize:22,fontWeight:800,color:"var(--accent)",fontFamily:"Georgia,serif"}}>Happy Dino</div>
       <div style={{fontSize:12,color:"var(--muted)",marginBottom:28}}>Xperience Camp Manager</div>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:16,padding:24}}>
-        <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",marginBottom:10}}>ENTER PIN</div>
-        <input type="password" value={pin} onChange={e=>{setPin(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="••••" style={{...inp,textAlign:"center",fontSize:26,letterSpacing:8,marginBottom:10}}/>
+        <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",marginBottom:10}}>ENTER PASSWORD</div>
+        <input type="password" value={password} onChange={e=>{setPassword(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="Password" style={{...inp,textAlign:"center",fontSize:18,letterSpacing:2,marginBottom:10}}/>
+        {r&&<div style={{marginBottom:10,padding:"8px 0",borderRadius:8,background:r.bg}}>
+          <div style={{fontSize:16,fontWeight:900,color:r.text,letterSpacing:"0.06em"}}>LOGGING IN AS {r.label}</div>
+        </div>}
         {err&&<div style={{color:"#ef4444",fontSize:12,marginBottom:8}}>{err}</div>}
         <button onClick={handle} style={{...btn("primary"),width:"100%"}}>Login</button>
-        <div style={{marginTop:14,fontSize:11,color:"var(--muted)"}}>Admin: 1234 · Finance: 5678 · Crew: 0000</div>
       </div>
+      <div style={{marginTop:18,fontSize:10,color:"var(--muted)"}}>{APP_VERSION}</div>
     </div>
   </div>;
+}
+
+// ── GOOGLE DRIVE SAVE ──
+function useGoogleDrive(){
+  const [ready,setReady]=useState(false);
+  const [signedIn,setSignedIn]=useState(false);
+  const tokenClient=useRef(null);
+  const accessToken=useRef(null);
+
+  useEffect(()=>{
+    const check=setInterval(()=>{
+      if(window.google&&window.google.accounts&&window.gapi){
+        clearInterval(check);
+        window.gapi.load("client",()=>{
+          window.gapi.client.init({}).then(()=>{
+            tokenClient.current=window.google.accounts.oauth2.initTokenClient({
+              client_id:GOOGLE_CLIENT_ID,
+              scope:DRIVE_SCOPE,
+              callback:(resp)=>{
+                if(resp.access_token){accessToken.current=resp.access_token;setSignedIn(true);}
+              }
+            });
+            setReady(true);
+          });
+        });
+      }
+    },300);
+    return ()=>clearInterval(check);
+  },[]);
+
+  const requestAccess=()=>{
+    if(tokenClient.current)tokenClient.current.requestAccessToken();
+  };
+
+  const uploadToDrive=async(filename,content,mimeType)=>{
+    if(!accessToken.current){requestAccess();return{ok:false,reason:"not_signed_in"};}
+    try{
+      const metadata={name:filename,parents:[GOOGLE_DRIVE_FOLDER_ID]};
+      const boundary="-------happydino_boundary";
+      const delimiter="\r\n--"+boundary+"\r\n";
+      const closeDelim="\r\n--"+boundary+"--";
+      const multipartBody=
+        delimiter+"Content-Type: application/json\r\n\r\n"+JSON.stringify(metadata)+
+        delimiter+"Content-Type: "+mimeType+"\r\n\r\n"+content+
+        closeDelim;
+      const res=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",{
+        method:"POST",
+        headers:{"Authorization":"Bearer "+accessToken.current,"Content-Type":"multipart/related; boundary="+boundary},
+        body:multipartBody
+      });
+      if(!res.ok){const t=await res.text();return{ok:false,reason:t};}
+      const data=await res.json();
+      return{ok:true,data};
+    }catch(e){
+      return{ok:false,reason:e.message};
+    }
+  };
+
+  return{ready,signedIn,requestAccess,uploadToDrive};
 }
 
 // ── INVOICE PDF ──
@@ -143,7 +274,7 @@ function generateInvoicePDF(payment,student,session,school,campType,settings){
 }
 
 // ── DASHBOARD ──
-function Dashboard({db,navigate}){
+function Dashboard({db,navigate,role}){
   const schools=db.schools||[];const sessions=db.sessions||[];
   const payments=db.payments||[];const expenses=db.expenses||[];
   const paid=payments.filter(p=>p.status==="paid").reduce((a,p)=>a+parseFloat(p.amount||0),0);
@@ -156,6 +287,7 @@ function Dashboard({db,navigate}){
   const schoolsWithCamps=[...new Set(sessions.map(s=>s.schoolId))].length;
   const completedCount=sessions.filter(s=>s.status==="completed").length;
   const scheduledCount=sessions.filter(s=>s.status==="scheduled").length;
+  const hideRevenue=role==="user";
   return <div>
     <h2 style={{fontSize:20,fontWeight:800,marginBottom:20}}>Dashboard</h2>
     <SectionHeader label="Schools Overview"/>
@@ -165,6 +297,7 @@ function Dashboard({db,navigate}){
       <StatCard label="Completed Sessions" value={completedCount} color="#2563eb" onClick={()=>navigate("sessions","completed")}/>
       <StatCard label="Scheduled" value={scheduledCount} color="#d97706" onClick={()=>navigate("sessions","scheduled")}/>
     </div>
+    {!hideRevenue&&<>
     <SectionHeader label="Revenue"/>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,marginBottom:20}}>
       <StatCard label="Total Revenue" value={fmt(totalRev)} color="#16a34a" onClick={()=>navigate("payments","all")}/>
@@ -185,6 +318,7 @@ function Dashboard({db,navigate}){
       </div>
       <div style={{fontSize:12,color:"var(--muted)"}}>{totalRev>0?Math.round((paid/totalRev)*100):0}% collected</div>
     </div>
+    </>}
     <SectionHeader label="Upcoming Sessions"/>
     {upcoming.length===0?<div style={{color:"var(--muted)",fontSize:13}}>No scheduled sessions.</div>:
     <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,overflow:"hidden"}}>
@@ -202,8 +336,34 @@ function Dashboard({db,navigate}){
   </div>;
 }
 
+// ── GLOBAL SEARCH ──
+function GlobalSearch({db,onResultClick}){
+  const [q,setQ]=useState("");
+  const [open,setOpen]=useState(false);
+  const results=(()=>{
+    if(!q||q.length<2)return[];
+    const ql=q.toLowerCase();
+    const out=[];
+    (db.schools||[]).forEach(s=>{if(s.name?.toLowerCase().includes(ql))out.push({type:"School",label:s.name,sub:s.address,nav:"schools"});});
+    (db.students||[]).forEach(s=>{if(s.name?.toLowerCase().includes(ql))out.push({type:"Student",label:s.name,sub:s.className,nav:"students"});});
+    (db.crew||[]).forEach(c=>{if(c.name?.toLowerCase().includes(ql))out.push({type:"Crew",label:c.name,sub:c.phone,nav:"crew"});});
+    return out.slice(0,8);
+  })();
+  return <div style={{position:"relative",flex:1,maxWidth:280}}>
+    <input value={q} onChange={e=>{setQ(e.target.value);setOpen(true);}} onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
+      placeholder="🔍 Search schools, students, crew..." style={{...inp,padding:"7px 12px",fontSize:12}}/>
+    {open&&results.length>0&&<div style={{position:"absolute",top:"100%",left:0,right:0,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:8,marginTop:4,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:200,maxHeight:300,overflowY:"auto"}}>
+      {results.map((r,i)=><div key={i} onClick={()=>{onResultClick(r.nav);setQ("");setOpen(false);}} style={{padding:"8px 12px",cursor:"pointer",borderTop:i?"1px solid var(--border)":"none",fontSize:12}}
+        onMouseDown={e=>e.preventDefault()}>
+        <Badge label={r.type} color={r.type==="School"?"purple":r.type==="Student"?"blue":"green"}/> <b>{r.label}</b>
+        {r.sub&&<div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>{r.sub}</div>}
+      </div>)}
+    </div>}
+  </div>;
+}
+
 // ── SCHOOLS ──
-function Schools({db,refresh}){
+function Schools({db,refresh,actor,onHome}){
   const [view,setView]=useState("list");
   const [selSchool,setSelSchool]=useState(null);
   const [showModal,setShowModal]=useState(false);
@@ -212,14 +372,11 @@ function Schools({db,refresh}){
   const schools=db.schools||[];
   const openAdd=()=>{setForm({id:uid(),name:"",address:"",mapUrl:"",principal:"",phone:"",email:"",notes:""});setEditing(null);setShowModal(true);};
   const openEdit=(s)=>{setForm({...s});setEditing(s.id);setShowModal(true);};
-  const save=()=>{const list=editing?schools.map(s=>s.id===editing?form:s):[...schools,form];setDB({schools:list});refresh();setShowModal(false);};
-  const del=(id)=>{if(window.confirm("Delete school?")){setDB({schools:schools.filter(s=>s.id!==id)});refresh();}};
-  if(view==="students"&&selSchool)return <Students db={db} refresh={refresh} school={selSchool} onBack={()=>setView("list")}/>;
+  const save=()=>{const list=editing?schools.map(s=>s.id===editing?form:s):[...schools,form];setDB({schools:list});logAction(actor.role,actor.name,editing?"EDIT_SCHOOL":"ADD_SCHOOL",form.name);refresh();setShowModal(false);};
+  const del=(id)=>{const s=schools.find(x=>x.id===id);if(window.confirm("Delete school?")){setDB({schools:schools.filter(s=>s.id!==id)});logAction(actor.role,actor.name,"DELETE_SCHOOL",s?.name);refresh();}};
+  if(view==="students"&&selSchool)return <Students db={db} refresh={refresh} school={selSchool} onBack={()=>setView("list")} actor={actor}/>;
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-      <h2 style={{fontSize:20,fontWeight:800}}>Schools</h2>
-      <button onClick={openAdd} style={btn("primary")}>+ Add School</button>
-    </div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Schools"]} onHome={onHome} title="Schools" action={<button onClick={openAdd} style={btn("primary")}>+ Add School</button>}/>
     {schools.length===0?<EmptyState icon="🏫" text="No schools yet."/>:
     <div style={{display:"grid",gap:10}}>
       {schools.map(s=>{
@@ -261,7 +418,7 @@ function Schools({db,refresh}){
 }
 
 // ── STUDENTS ──
-function Students({db,refresh,school,onBack}){
+function Students({db,refresh,school,onBack,actor,onHome}){
   const [showModal,setShowModal]=useState(false);
   const [editing,setEditing]=useState(null);
   const [form,setForm]=useState({});
@@ -269,14 +426,10 @@ function Students({db,refresh,school,onBack}){
   const students=school?allStudents.filter(s=>s.schoolId===school.id):allStudents;
   const openAdd=()=>{setForm({id:uid(),schoolId:school?.id||"",name:"",ic:"",dob:"",address:"",className:"",phone:"",parentName:"",parentRelation:"Mother",parentPhone:"",emergencyName:"",emergencyRelation:"Guardian",emergencyPhone:"",allergies:"",tshirtSize:"",notes:""});setEditing(null);setShowModal(true);};
   const openEdit=(s)=>{setForm({...s});setEditing(s.id);setShowModal(true);};
-  const save=()=>{const list=editing?allStudents.map(s=>s.id===editing?form:s):[...allStudents,form];setDB({students:list});refresh();setShowModal(false);};
-  const del=(id)=>{if(window.confirm("Delete student?")){setDB({students:allStudents.filter(s=>s.id!==id)});refresh();}};
+  const save=()=>{const list=editing?allStudents.map(s=>s.id===editing?form:s):[...allStudents,form];setDB({students:list});logAction(actor.role,actor.name,editing?"EDIT_STUDENT":"ADD_STUDENT",form.name);refresh();setShowModal(false);};
+  const del=(id)=>{const s=allStudents.find(x=>x.id===id);if(window.confirm("Delete student?")){setDB({students:allStudents.filter(s=>s.id!==id)});logAction(actor.role,actor.name,"DELETE_STUDENT",s?.name);refresh();}};
   return <div>
-    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
-      {onBack&&<button onClick={onBack} style={{...btn("ghost"),padding:"6px 12px"}}>← Back</button>}
-      <h2 style={{fontSize:20,fontWeight:800,flex:1}}>{school?`Students — ${school.name}`:"All Students"}</h2>
-      <button onClick={openAdd} style={btn("primary")}>+ Add Student</button>
-    </div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},school?"Schools":"Students",school?school.name:null].filter(Boolean)} onBack={onBack} onHome={onHome} title={school?`Students — ${school.name}`:"All Students"} action={<button onClick={openAdd} style={btn("primary")}>+ Add Student</button>}/>
     {students.length===0?<EmptyState icon="🎒" text="No students yet."/>:
     <div style={{display:"grid",gap:10}}>
       {students.map(s=>{
@@ -340,20 +493,17 @@ function Students({db,refresh,school,onBack}){
 }
 
 // ── CAMP TYPES ──
-function CampTypes({db,refresh}){
+function CampTypes({db,refresh,actor,onHome}){
   const [showModal,setShowModal]=useState(false);
   const [editing,setEditing]=useState(null);
   const [form,setForm]=useState({});
   const campTypes=db.campTypes||[];
   const openAdd=()=>{setForm({id:uid(),name:"",fee:"",crewFee:"",materialCost:"",mealCost:"",extraCosts:[],discountable:true,sibling2Pct:10,sibling3Pct:20,description:""});setEditing(null);setShowModal(true);};
   const openEdit=(c)=>{setForm({...c,extraCosts:c.extraCosts||[]});setEditing(c.id);setShowModal(true);};
-  const save=()=>{const list=editing?campTypes.map(c=>c.id===editing?form:c):[...campTypes,form];setDB({campTypes:list});refresh();setShowModal(false);};
-  const del=(id)=>{if(window.confirm("Delete?")){setDB({campTypes:campTypes.filter(c=>c.id!==id)});refresh();}};
+  const save=()=>{const list=editing?campTypes.map(c=>c.id===editing?form:c):[...campTypes,form];setDB({campTypes:list});logAction(actor.role,actor.name,editing?"EDIT_CAMPTYPE":"ADD_CAMPTYPE",form.name);refresh();setShowModal(false);};
+  const del=(id)=>{const c=campTypes.find(x=>x.id===id);if(window.confirm("Delete?")){setDB({campTypes:campTypes.filter(c=>c.id!==id)});logAction(actor.role,actor.name,"DELETE_CAMPTYPE",c?.name);refresh();}};
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-      <h2 style={{fontSize:20,fontWeight:800}}>Camp Types</h2>
-      <button onClick={openAdd} style={btn("primary")}>+ New Camp Type</button>
-    </div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Camp Types"]} onHome={onHome} title="Camp Types" action={<button onClick={openAdd} style={btn("primary")}>+ New Camp Type</button>}/>
     {campTypes.length===0?<EmptyState icon="🦖" text="No camp types yet."/>:
     <div style={{display:"grid",gap:10}}>
       {campTypes.map(c=>{
@@ -407,7 +557,7 @@ function CampTypes({db,refresh}){
 }
 
 // ── SESSIONS ──
-function Sessions({db,refresh,initialFilter}){
+function Sessions({db,refresh,initialFilter,actor,onHome}){
   const [showModal,setShowModal]=useState(false);
   const [editing,setEditing]=useState(null);
   const [form,setForm]=useState({});
@@ -417,15 +567,12 @@ function Sessions({db,refresh,initialFilter}){
   useEffect(()=>{if(initialFilter)setFilter(initialFilter);},[initialFilter]);
   const openAdd=()=>{setForm({id:uid(),schoolId:"",campTypeId:"",date:"",time:"",status:"scheduled",notes:""});setEditing(null);setShowModal(true);};
   const openEdit=(s)=>{setForm({...s});setEditing(s.id);setShowModal(true);};
-  const save=()=>{const list=editing?sessions.map(s=>s.id===editing?form:s):[...sessions,form];setDB({sessions:list});refresh();setShowModal(false);};
-  const del=(id)=>{if(window.confirm("Delete session?")){setDB({sessions:sessions.filter(s=>s.id!==id)});refresh();}};
+  const save=()=>{const list=editing?sessions.map(s=>s.id===editing?form:s):[...sessions,form];setDB({sessions:list});logAction(actor.role,actor.name,editing?"EDIT_SESSION":"ADD_SESSION",form.date);refresh();setShowModal(false);};
+  const del=(id)=>{if(window.confirm("Delete session?")){setDB({sessions:sessions.filter(s=>s.id!==id)});logAction(actor.role,actor.name,"DELETE_SESSION",id);refresh();}};
   const filtered=filter==="all"?sessions:sessions.filter(s=>s.status===filter);
-  if(selected)return <SessionDetail session={selected} db={db} refresh={refresh} onBack={()=>setSelected(null)}/>;
+  if(selected)return <SessionDetail session={selected} db={db} refresh={refresh} onBack={()=>setSelected(null)} actor={actor}/>;
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-      <h2 style={{fontSize:20,fontWeight:800}}>Camp Sessions</h2>
-      <button onClick={openAdd} style={btn("primary")}>+ New Session</button>
-    </div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Sessions",filter!=="all"?filter:null].filter(Boolean)} onHome={onHome} title="Camp Sessions" action={<button onClick={openAdd} style={btn("primary")}>+ New Session</button>}/>
     <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
       {["all","scheduled","completed","cancelled"].map(f=><button key={f} onClick={()=>setFilter(f)} style={{padding:"5px 12px",borderRadius:8,border:"1px solid var(--border)",cursor:"pointer",fontWeight:600,fontSize:12,background:filter===f?"var(--accent)":"var(--surface)",color:filter===f?"#fff":"var(--text)",textTransform:"capitalize"}}>{f}</button>)}
     </div>
@@ -474,7 +621,7 @@ function Sessions({db,refresh,initialFilter}){
   </div>;
 }
 
-function SessionDetail({session,db,refresh,onBack}){
+function SessionDetail({session,db,refresh,onBack,actor}){
   const [tab,setTab]=useState("registrations");
   const [s,setS]=useState(session);
   useEffect(()=>{const u=(db.sessions||[]).find(ss=>ss.id===s.id);if(u)setS(u);},[db]);
@@ -482,22 +629,19 @@ function SessionDetail({session,db,refresh,onBack}){
   const ct=(db.campTypes||[]).find(c=>c.id===s.campTypeId);
   const tabs=[{key:"registrations",label:"Registrations"},{key:"crew",label:"Crew"},{key:"attendance",label:"Attendance"},{key:"expenses",label:"Expenses"}];
   return <div>
-    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
-      <button onClick={onBack} style={{...btn("ghost"),padding:"6px 12px"}}>← Back</button>
-      <div><div style={{fontWeight:800,fontSize:16}}>{school?.name} — {ct?.name}</div>
-        <div style={{fontSize:12,color:"var(--muted)"}}>{fmtDate(s.date)}{s.time&&` at ${s.time}`}</div></div>
-    </div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:null},{label:"Sessions",nav:null},school?.name||"Session"]} onBack={onBack} title={`${school?.name||""} — ${ct?.name||""}`}/>
+    <div style={{fontSize:12,color:"var(--muted)",marginTop:-12,marginBottom:14}}>{fmtDate(s.date)}{s.time&&` at ${s.time}`}</div>
     <div style={{display:"flex",gap:6,marginBottom:18,flexWrap:"wrap"}}>
       {tabs.map(t=><button key={t.key} onClick={()=>setTab(t.key)} style={{padding:"6px 14px",borderRadius:8,border:"1px solid var(--border)",cursor:"pointer",fontWeight:600,fontSize:12,background:tab===t.key?"var(--accent)":"var(--surface)",color:tab===t.key?"#fff":"var(--text)"}}>{t.label}</button>)}
     </div>
-    {tab==="registrations"&&<SessionRegistrations session={s} db={db} refresh={refresh}/>}
-    {tab==="crew"&&<SessionCrew session={s} db={db} refresh={refresh}/>}
+    {tab==="registrations"&&<SessionRegistrations session={s} db={db} refresh={refresh} actor={actor}/>}
+    {tab==="crew"&&<SessionCrew session={s} db={db} refresh={refresh} actor={actor}/>}
     {tab==="attendance"&&<SessionAttendance session={s} db={db} refresh={refresh}/>}
-    {tab==="expenses"&&<SessionExpenses session={s} db={db} refresh={refresh}/>}
+    {tab==="expenses"&&<SessionExpenses session={s} db={db} refresh={refresh} actor={actor}/>}
   </div>;
 }
 
-function SessionRegistrations({session,db,refresh}){
+function SessionRegistrations({session,db,refresh,actor}){
   const [showModal,setShowModal]=useState(false);
   const [form,setForm]=useState({studentId:"",paymentOverride:""});
   const regs=(db.registrations||[]).filter(r=>r.sessionId===session.id);
@@ -517,9 +661,10 @@ function SessionRegistrations({session,db,refresh}){
     const reg={id:uid(),sessionId:session.id,studentId:form.studentId,fee,consentSigned:false,present:false};
     const pay={id:uid(),registrationId:reg.id,studentId:form.studentId,sessionId:session.id,amount:fee,status:"unpaid",method:"",paidAt:"",invoiceNo:`INV-${Date.now()}`};
     setDB({registrations:[...(db.registrations||[]),reg],payments:[...(db.payments||[]),pay]});
+    logAction(actor.role,actor.name,"REGISTER_STUDENT",form.studentId);
     refresh();setShowModal(false);setForm({studentId:"",paymentOverride:""});
   };
-  const updatePay=(payId,status)=>{setDB({payments:(db.payments||[]).map(p=>p.id===payId?{...p,status,paidAt:status==="paid"?new Date().toISOString():p.paidAt}:p)});refresh();};
+  const updatePay=(payId,status)=>{setDB({payments:(db.payments||[]).map(p=>p.id===payId?{...p,status,paidAt:status==="paid"?new Date().toISOString():p.paidAt}:p)});logAction(actor.role,actor.name,"UPDATE_PAYMENT",`${payId} -> ${status}`);refresh();};
   const toggleConsent=(regId)=>{setDB({registrations:(db.registrations||[]).map(r=>r.id===regId?{...r,consentSigned:!r.consentSigned}:r)});refresh();};
   const removeReg=(regId)=>{if(!window.confirm("Remove?"))return;setDB({registrations:(db.registrations||[]).filter(r=>r.id!==regId)});refresh();};
   const printInvoice=(reg)=>{
@@ -575,7 +720,7 @@ function SessionRegistrations({session,db,refresh}){
   </div>;
 }
 
-function SessionCrew({session,db,refresh}){
+function SessionCrew({session,db,refresh,actor}){
   const [showModal,setShowModal]=useState(false);
   const [form,setForm]=useState({crewId:"",role:"Facilitator",feeOverride:""});
   const assignments=(db.crewAssignments||[]).filter(a=>a.sessionId===session.id);
@@ -584,6 +729,7 @@ function SessionCrew({session,db,refresh}){
   const add=()=>{
     if(!form.crewId)return;const fee=form.feeOverride||(ct?.crewFee||0);
     setDB({crewAssignments:[...(db.crewAssignments||[]),{id:uid(),sessionId:session.id,crewId:form.crewId,role:form.role,fee,paid:false}]});
+    logAction(actor.role,actor.name,"ASSIGN_CREW",form.crewId);
     refresh();setShowModal(false);setForm({crewId:"",role:"Facilitator",feeOverride:""});
   };
   const togglePaid=(id)=>{setDB({crewAssignments:(db.crewAssignments||[]).map(a=>a.id===id?{...a,paid:!a.paid}:a)});refresh();};
@@ -645,11 +791,11 @@ function SessionAttendance({session,db,refresh}){
   </div>;
 }
 
-function SessionExpenses({session,db,refresh}){
+function SessionExpenses({session,db,refresh,actor}){
   const [showModal,setShowModal]=useState(false);const [form,setForm]=useState({});
   const expenses=(db.expenses||[]).filter(e=>e.sessionId===session.id);
   const openAdd=()=>{setForm({id:uid(),sessionId:session.id,category:"materials",label:"",amount:"",km:"",ratePerKm:"0.50",notes:""});setShowModal(true);};
-  const save=()=>{let amount=parseFloat(form.amount||0);if(form.category==="mileage")amount=parseFloat(form.km||0)*parseFloat(form.ratePerKm||0.5);setDB({expenses:[...(db.expenses||[]),{...form,amount}]});refresh();setShowModal(false);};
+  const save=()=>{let amount=parseFloat(form.amount||0);if(form.category==="mileage")amount=parseFloat(form.km||0)*parseFloat(form.ratePerKm||0.5);setDB({expenses:[...(db.expenses||[]),{...form,amount}]});logAction(actor.role,actor.name,"ADD_EXPENSE",form.label);refresh();setShowModal(false);};
   const del=(id)=>{setDB({expenses:(db.expenses||[]).filter(e=>e.id!==id)});refresh();};
   const total=expenses.reduce((a,e)=>a+parseFloat(e.amount||0),0);
   return <div>
@@ -683,17 +829,15 @@ function SessionExpenses({session,db,refresh}){
 }
 
 // ── CREW ──
-function Crew({db,refresh}){
+function Crew({db,refresh,actor,onHome}){
   const [showModal,setShowModal]=useState(false);const [editing,setEditing]=useState(null);const [form,setForm]=useState({});
   const crew=db.crew||[];
   const openAdd=()=>{setForm({id:uid(),name:"",nric:"",dob:"",address:"",phone:"",email:"",rating:3,notes:""});setEditing(null);setShowModal(true);};
   const openEdit=(c)=>{setForm({...c});setEditing(c.id);setShowModal(true);};
-  const save=()=>{const list=editing?crew.map(c=>c.id===editing?form:c):[...crew,form];setDB({crew:list});refresh();setShowModal(false);};
-  const del=(id)=>{if(window.confirm("Delete?")){setDB({crew:crew.filter(c=>c.id!==id)});refresh();}};
+  const save=()=>{const list=editing?crew.map(c=>c.id===editing?form:c):[...crew,form];setDB({crew:list});logAction(actor.role,actor.name,editing?"EDIT_CREW":"ADD_CREW",form.name);refresh();setShowModal(false);};
+  const del=(id)=>{const c=crew.find(x=>x.id===id);if(window.confirm("Delete?")){setDB({crew:crew.filter(c=>c.id!==id)});logAction(actor.role,actor.name,"DELETE_CREW",c?.name);refresh();}};
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-      <h2 style={{fontSize:20,fontWeight:800}}>Crew</h2><button onClick={openAdd} style={btn("primary")}>+ Add Crew</button>
-    </div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Crew"]} onHome={onHome} title="Crew" action={<button onClick={openAdd} style={btn("primary")}>+ Add Crew</button>}/>
     {crew.length===0?<EmptyState icon="🧑‍🏫" text="No crew yet."/>:
     <div style={{display:"grid",gap:10}}>
       {crew.map(c=>{
@@ -740,20 +884,18 @@ function Crew({db,refresh}){
 }
 
 // ── INVENTORY ──
-function Inventory({db,refresh}){
+function Inventory({db,refresh,actor,onHome}){
   const [showModal,setShowModal]=useState(false);const [editing,setEditing]=useState(null);const [form,setForm]=useState({});
   const inventory=db.inventory||[];
   const openAdd=()=>{setForm({id:uid(),name:"",category:"materials",sku:"",unitCost:"",qty:0,unit:"pcs",minQty:5,notes:""});setEditing(null);setShowModal(true);};
   const openEdit=(i)=>{setForm({...i});setEditing(i.id);setShowModal(true);};
-  const save=()=>{const list=editing?inventory.map(i=>i.id===editing?form:i):[...inventory,form];setDB({inventory:list});refresh();setShowModal(false);};
-  const del=(id)=>{if(window.confirm("Delete?")){setDB({inventory:inventory.filter(i=>i.id!==id)});refresh();}};
+  const save=()=>{const list=editing?inventory.map(i=>i.id===editing?form:i):[...inventory,form];setDB({inventory:list});logAction(actor.role,actor.name,editing?"EDIT_ITEM":"ADD_ITEM",form.name);refresh();setShowModal(false);};
+  const del=(id)=>{const i=inventory.find(x=>x.id===id);if(window.confirm("Delete?")){setDB({inventory:inventory.filter(i=>i.id!==id)});logAction(actor.role,actor.name,"DELETE_ITEM",i?.name);refresh();}};
   const adjust=(id,d)=>{setDB({inventory:inventory.map(i=>i.id===id?{...i,qty:Math.max(0,(parseInt(i.qty)||0)+d)}:i)});refresh();};
   const totalVal=inventory.reduce((a,i)=>a+parseFloat(i.unitCost||0)*parseInt(i.qty||0),0);
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-      <div><h2 style={{fontSize:20,fontWeight:800}}>Inventory</h2><div style={{fontSize:12,color:"var(--muted)"}}>Total value: {fmt(totalVal)}</div></div>
-      <button onClick={openAdd} style={btn("primary")}>+ Add Item</button>
-    </div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Inventory"]} onHome={onHome} title="Inventory" action={<button onClick={openAdd} style={btn("primary")}>+ Add Item</button>}/>
+    <div style={{fontSize:12,color:"var(--muted)",marginTop:-12,marginBottom:14}}>Total value: {fmt(totalVal)}</div>
     {inventory.length===0?<EmptyState icon="📦" text="No inventory items yet."/>:
     <div style={{display:"grid",gap:10}}>
       {inventory.map(item=>{
@@ -797,13 +939,14 @@ function Inventory({db,refresh}){
 }
 
 // ── PAYMENTS ──
-function Payments({db,refresh,initialFilter}){
+function Payments({db,refresh,initialFilter,role,actor,onHome}){
   const payments=db.payments||[];
   const [filter,setFilter]=useState(initialFilter||"all");
   useEffect(()=>{if(initialFilter)setFilter(initialFilter);},[initialFilter]);
   const filtered=filter==="all"?payments:payments.filter(p=>p.status===filter);
   const tot=(s)=>payments.filter(p=>p.status===s).reduce((a,p)=>a+parseFloat(p.amount||0),0);
-  const updateStatus=(id,status)=>{setDB({payments:payments.map(p=>p.id===id?{...p,status,paidAt:status==="paid"?new Date().toISOString():p.paidAt}:p)});refresh();};
+  const hideTotals=role==="user";
+  const updateStatus=(id,status)=>{setDB({payments:payments.map(p=>p.id===id?{...p,status,paidAt:status==="paid"?new Date().toISOString():p.paidAt}:p)});logAction(actor.role,actor.name,"UPDATE_PAYMENT",`${id} -> ${status}`);refresh();};
   const printInvoice=(p)=>{
     const student=(db.students||[]).find(s=>s.id===p.studentId);
     const session=(db.sessions||[]).find(s=>s.id===p.sessionId);
@@ -812,12 +955,15 @@ function Payments({db,refresh,initialFilter}){
     generateInvoicePDF(p,student,session,school,campType,getDB().settings);
   };
   return <div>
-    <h2 style={{fontSize:20,fontWeight:800,marginBottom:16}}>Payments</h2>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:18}}>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Payments",filter!=="all"?filter:null].filter(Boolean)} onHome={onHome} title="Payments"/>
+    {!hideTotals&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:18}}>
       <StatCard label="Paid" value={fmt(tot("paid"))} color="#16a34a"/>
       <StatCard label="Unpaid" value={fmt(tot("unpaid"))} color="#d97706"/>
       <StatCard label="Refunded" value={fmt(tot("refunded"))} color="#ef4444"/>
-    </div>
+    </div>}
+    {hideTotals&&<div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:12,color:"var(--muted)"}}>
+      💡 Revenue totals are restricted for your role. You can still view and update individual payment statuses below.
+    </div>}
     <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
       {["all","paid","unpaid","refunded"].map(f=><button key={f} onClick={()=>setFilter(f)} style={{padding:"5px 12px",borderRadius:8,border:"1px solid var(--border)",cursor:"pointer",fontWeight:600,fontSize:12,background:filter===f?"var(--accent)":"var(--surface)",color:filter===f?"#fff":"var(--text)",textTransform:"capitalize"}}>{f}</button>)}
     </div>
@@ -848,7 +994,7 @@ function Payments({db,refresh,initialFilter}){
 }
 
 // ── REPORTS ──
-function Reports({db}){
+function Reports({db,onHome}){
   const sessions=db.sessions||[];const payments=db.payments||[];const expenses=db.expenses||[];
   const report=sessions.map(s=>{
     const school=(db.schools||[]).find(sc=>sc.id===s.schoolId);
@@ -862,7 +1008,7 @@ function Reports({db}){
   const totalRev=report.reduce((a,s)=>a+s.rev,0);
   const totalExp=report.reduce((a,s)=>a+s.exp,0);
   return <div>
-    <h2 style={{fontSize:20,fontWeight:800,marginBottom:18}}>Reports</h2>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Reports"]} onHome={onHome} title="Reports"/>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:18}}>
       <StatCard label="Total Revenue" value={fmt(totalRev)} color="#16a34a"/>
       <StatCard label="Total Expenses" value={fmt(totalExp)} color="#ef4444"/>
@@ -894,7 +1040,7 @@ function Reports({db}){
 }
 
 // ── COMMUNICATIONS ──
-function Communications({db,refresh}){
+function Communications({db,refresh,onHome}){
   const [form,setForm]=useState({sessionId:"",message:""});
   const comms=db.communications||[];const sessions=db.sessions||[];
   const getParents=(sid)=>{const regs=(db.registrations||[]).filter(r=>r.sessionId===sid);return regs.map(r=>{const s=(db.students||[]).find(st=>st.id===r.studentId);return s?{name:s.parentName,phone:s.parentPhone}:null;}).filter(Boolean);};
@@ -907,7 +1053,7 @@ function Communications({db,refresh}){
     setForm({sessionId:"",message:""});
   };
   return <div>
-    <h2 style={{fontSize:20,fontWeight:800,marginBottom:18}}>Communications</h2>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Communications"]} onHome={onHome} title="Communications"/>
     <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18,marginBottom:18}}>
       <div style={{fontWeight:700,fontSize:13,marginBottom:12}}>Send Broadcast Message</div>
       <Field label="Session"><select style={inp} value={form.sessionId} onChange={e=>setForm({...form,sessionId:e.target.value})}>
@@ -930,28 +1076,44 @@ function Communications({db,refresh}){
   </div>;
 }
 
+// ── AUDIT LOG ──
+function AuditLog({db,onHome}){
+  const log=[...(db.auditLog||[])].reverse();
+  return <div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Audit Log"]} onHome={onHome} title="Audit Log"/>
+    <div style={{fontSize:12,color:"var(--muted)",marginTop:-12,marginBottom:14}}>Showing last {log.length} actions (max 500 retained)</div>
+    {log.length===0?<EmptyState icon="📜" text="No actions logged yet."/>:
+    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,overflow:"hidden"}}>
+      {log.map((e,i)=><div key={e.id} style={{display:"flex",gap:10,padding:"10px 14px",borderTop:i?"1px solid var(--border)":"none",alignItems:"center",flexWrap:"wrap",fontSize:12}}>
+        <div style={{minWidth:130,color:"var(--muted)"}}>{fmtDateTime(e.ts)}</div>
+        <RoleBadge role={e.role}/>
+        <div style={{fontWeight:600}}>{e.name}</div>
+        <div style={{color:"var(--accent)",fontWeight:600}}>{e.action}</div>
+        <div style={{color:"var(--muted)",flex:1}}>{e.detail}</div>
+      </div>)}
+    </div>}
+  </div>;
+}
+
 // ── BACKUP & RESTORE ──
-function BackupRestore({db,refresh}){
+function BackupRestore({db,refresh,actor,onHome}){
   const [lastBackup,setLastBackup]=useState(()=>localStorage.getItem("happyDino_lastBackup")||null);
+  const [driveStatus,setDriveStatus]=useState("");
+  const drive=useGoogleDrive();
   const esc=(v)=>{if(v==null)return"";const s=String(v);if(s.includes(",")||s.includes('"')||s.includes("\n"))return`"${s.replace(/"/g,'""')}"`;return s;};
   const row=(...cells)=>cells.map(esc).join(",")+"\n";
-  const exportCombinedCSV=()=>{
+
+  const buildCombinedCSV=()=>{
     const d=getDB();
     const now=new Date().toISOString();
     let csv="";
     csv+=`"==== HAPPY DINO XPERIENCE CAMP — FULL EXPORT ===="\n`;
     csv+=`"Export Date:","${fmtDate(now)}"\n`;
     csv+=`"Exported by:","${d.settings?.companyName||"Happy Dino"}"\n\n`;
-
     csv+=`"---- SCHOOLS ----"\n`;
     csv+=row("Name","Address","Principal","Phone","Email","Sessions","Students","Notes");
-    (d.schools||[]).forEach(s=>{
-      const sc=(d.sessions||[]).filter(ss=>ss.schoolId===s.id).length;
-      const st=(d.students||[]).filter(st=>st.schoolId===s.id).length;
-      csv+=row(s.name,s.address,s.principal,s.phone,s.email,sc,st,s.notes);
-    });
+    (d.schools||[]).forEach(s=>{const sc=(d.sessions||[]).filter(ss=>ss.schoolId===s.id).length;const st=(d.students||[]).filter(st=>st.schoolId===s.id).length;csv+=row(s.name,s.address,s.principal,s.phone,s.email,sc,st,s.notes);});
     csv+="\n";
-
     csv+=`"---- STUDENTS ----"\n`;
     csv+=row("Name","IC/MyKid","DOB","Age","Class","School","T-Shirt","Parent Name","Relation","Parent Phone","Emergency Name","Emergency Phone","Allergies","Camps Attended","Upcoming Camps");
     (d.students||[]).forEach(s=>{
@@ -962,15 +1124,10 @@ function BackupRestore({db,refresh}){
       csv+=row(s.name,s.ic,s.dob,calcAge(s.dob),s.className,school?.name||"",s.tshirtSize,s.parentName,s.parentRelation,s.parentPhone,s.emergencyName,s.emergencyPhone,s.allergies,attended,upcoming);
     });
     csv+="\n";
-
     csv+=`"---- CAMP TYPES ----"\n`;
     csv+=row("Name","Fee (RM)","Crew Fee (RM)","Material Cost","Meal Cost","Sibling Discount","2nd %","3rd %","Sessions Used");
-    (d.campTypes||[]).forEach(c=>{
-      const sessions=(d.sessions||[]).filter(s=>s.campTypeId===c.id).length;
-      csv+=row(c.name,c.fee,c.crewFee,c.materialCost,c.mealCost,c.discountable?"Yes":"No",c.sibling2Pct,c.sibling3Pct,sessions);
-    });
+    (d.campTypes||[]).forEach(c=>{const sessions=(d.sessions||[]).filter(s=>s.campTypeId===c.id).length;csv+=row(c.name,c.fee,c.crewFee,c.materialCost,c.mealCost,c.discountable?"Yes":"No",c.sibling2Pct,c.sibling3Pct,sessions);});
     csv+="\n";
-
     csv+=`"---- CAMP SESSIONS ----"\n`;
     csv+=row("School","Camp Type","Date","Time","Status","Students Registered","Crew Assigned","Revenue (RM)","Expenses (RM)","Net P&L (RM)");
     (d.sessions||[]).forEach(s=>{
@@ -984,7 +1141,6 @@ function BackupRestore({db,refresh}){
       csv+=row(school?.name||"",ct?.name||"",s.date,s.time||"",s.status,regs,crew,rev.toFixed(2),exp.toFixed(2),(rev-exp-crewCost).toFixed(2));
     });
     csv+="\n";
-
     csv+=`"---- REGISTRATIONS ----"\n`;
     csv+=row("Student","School","Camp Type","Session Date","Fee (RM)","Payment Status","Invoice No","Paid Date","Consent Signed","Attended");
     (d.registrations||[]).forEach(r=>{
@@ -996,7 +1152,6 @@ function BackupRestore({db,refresh}){
       csv+=row(student?.name||"",school?.name||"",ct?.name||"",session?.date||"",r.fee,pay?.status||"",pay?.invoiceNo||"",pay?.paidAt?fmtDate(pay.paidAt):"",r.consentSigned?"Yes":"No",r.present?"Yes":"No");
     });
     csv+="\n";
-
     csv+=`"---- PAYMENTS ----"\n`;
     csv+=row("Invoice No","Student","School","Camp Type","Session Date","Amount (RM)","Status","Paid Date","Method");
     (d.payments||[]).forEach(p=>{
@@ -1007,17 +1162,10 @@ function BackupRestore({db,refresh}){
       csv+=row(p.invoiceNo,student?.name||"",school?.name||"",ct?.name||"",session?.date||"",p.amount,p.status,p.paidAt?fmtDate(p.paidAt):"",p.method||"");
     });
     csv+="\n";
-
     csv+=`"---- CREW ----"\n`;
     csv+=row("Name","NRIC","DOB","Age","Phone","Email","Rating","Total Sessions","Total Earned (RM)","Unpaid Sessions");
-    (d.crew||[]).forEach(c=>{
-      const asgn=(d.crewAssignments||[]).filter(a=>a.crewId===c.id);
-      const earned=asgn.reduce((a,x)=>a+parseFloat(x.fee||0),0);
-      const unpaid=asgn.filter(a=>!a.paid).length;
-      csv+=row(c.name,c.nric,c.dob,calcAge(c.dob),c.phone,c.email,c.rating,asgn.length,earned.toFixed(2),unpaid);
-    });
+    (d.crew||[]).forEach(c=>{const asgn=(d.crewAssignments||[]).filter(a=>a.crewId===c.id);const earned=asgn.reduce((a,x)=>a+parseFloat(x.fee||0),0);const unpaid=asgn.filter(a=>!a.paid).length;csv+=row(c.name,c.nric,c.dob,calcAge(c.dob),c.phone,c.email,c.rating,asgn.length,earned.toFixed(2),unpaid);});
     csv+="\n";
-
     csv+=`"---- CREW ASSIGNMENTS ----"\n`;
     csv+=row("Crew Name","School","Camp Type","Session Date","Role","Fee (RM)","Paid");
     (d.crewAssignments||[]).forEach(a=>{
@@ -1028,7 +1176,6 @@ function BackupRestore({db,refresh}){
       csv+=row(crew?.name||"",school?.name||"",ct?.name||"",session?.date||"",a.role,a.fee,a.paid?"Yes":"No");
     });
     csv+="\n";
-
     csv+=`"---- EXPENSES ----"\n`;
     csv+=row("School","Camp Type","Session Date","Category","Label","Amount (RM)","KM","Rate/KM","Notes");
     (d.expenses||[]).forEach(e=>{
@@ -1038,49 +1185,61 @@ function BackupRestore({db,refresh}){
       csv+=row(school?.name||"",ct?.name||"",session?.date||"",e.category,e.label,e.amount,e.km||"",e.ratePerKm||"",e.notes||"");
     });
     csv+="\n";
-
     csv+=`"---- INVENTORY ----"\n`;
     csv+=row("Name","Category","SKU","Unit Cost (RM)","Qty","Unit","Total Value (RM)","Min Qty","Low Stock","Notes");
-    (d.inventory||[]).forEach(i=>{
-      const val=parseFloat(i.unitCost||0)*parseInt(i.qty||0);
-      const low=parseInt(i.qty)<=parseInt(i.minQty||0);
-      csv+=row(i.name,i.category,i.sku||"",i.unitCost,i.qty,i.unit,val.toFixed(2),i.minQty,low?"YES":"no",i.notes||"");
-    });
+    (d.inventory||[]).forEach(i=>{const val=parseFloat(i.unitCost||0)*parseInt(i.qty||0);const low=parseInt(i.qty)<=parseInt(i.minQty||0);csv+=row(i.name,i.category,i.sku||"",i.unitCost,i.qty,i.unit,val.toFixed(2),i.minQty,low?"YES":"no",i.notes||"");});
     csv+="\n";
-
     csv+=`"---- COMMUNICATIONS ----"\n`;
     csv+=row("School","Session Date","Sent At","Message","Recipients");
-    (d.communications||[]).forEach(c=>{
-      const session=(d.sessions||[]).find(s=>s.id===c.sessionId);
-      const school=(d.schools||[]).find(s=>s.id===session?.schoolId);
-      csv+=row(school?.name||"",session?.date||"",fmtDate(c.sentAt),c.message,c.recipientCount);
-    });
+    (d.communications||[]).forEach(c=>{const session=(d.sessions||[]).find(s=>s.id===c.sessionId);const school=(d.schools||[]).find(s=>s.id===session?.schoolId);csv+=row(school?.name||"",session?.date||"",fmtDate(c.sentAt),c.message,c.recipientCount);});
+    return csv;
+  };
 
+  const exportCombinedCSV=()=>{
+    const csv=buildCombinedCSV();
     const ts=new Date().toISOString().slice(0,10);
     const a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);a.download=`happy-dino-export-${ts}.csv`;a.click();
-    localStorage.setItem("happyDino_lastBackup",now);setLastBackup(now);
+    const now=new Date().toISOString();localStorage.setItem("happyDino_lastBackup",now);setLastBackup(now);
+    logAction(actor.role,actor.name,"EXPORT_CSV","Combined CSV exported");
   };
   const exportJSON=()=>{
     const data=JSON.stringify(getDB(),null,2);
     const ts=new Date().toISOString().slice(0,10);
     const a=document.createElement("a");a.href="data:application/json;charset=utf-8,"+encodeURIComponent(data);a.download=`happy-dino-backup-${ts}.json`;a.click();
     const now=new Date().toISOString();localStorage.setItem("happyDino_lastBackup",now);setLastBackup(now);
+    logAction(actor.role,actor.name,"EXPORT_JSON","Full JSON backup exported");
   };
   const importData=(e)=>{
     const file=e.target.files[0];if(!file)return;
     const reader=new FileReader();
-    reader.onload=(ev)=>{try{saveDB(JSON.parse(ev.target.result));refresh();alert("Data imported successfully!");e.target.value="";}catch{alert("Invalid backup file.");}};
+    reader.onload=(ev)=>{try{saveDB(JSON.parse(ev.target.result));refresh();logAction(actor.role,actor.name,"IMPORT_DATA","Restored from JSON backup");alert("Data imported successfully!");e.target.value="";}catch{alert("Invalid backup file.");}};
     reader.readAsText(file);
   };
+
+  const saveToDriveJSON=async()=>{
+    setDriveStatus("Connecting to Google Drive...");
+    const data=JSON.stringify(getDB(),null,2);
+    const ts=new Date().toISOString().slice(0,10);
+    const res=await drive.uploadToDrive(`happy-dino-backup-${ts}.json`,data,"application/json");
+    if(res.ok){setDriveStatus("✓ Saved to Google Drive successfully!");logAction(actor.role,actor.name,"DRIVE_SAVE_JSON","Backup saved to Drive");}
+    else if(res.reason==="not_signed_in"){setDriveStatus("Sign-in requested — please complete the Google sign-in popup, then click again.");}
+    else{setDriveStatus("⚠ Drive save failed: "+(res.reason||"unknown error"));}
+  };
+  const saveToDriveCSV=async()=>{
+    setDriveStatus("Connecting to Google Drive...");
+    const csv=buildCombinedCSV();
+    const ts=new Date().toISOString().slice(0,10);
+    const res=await drive.uploadToDrive(`happy-dino-export-${ts}.csv`,csv,"text/csv");
+    if(res.ok){setDriveStatus("✓ Saved to Google Drive successfully!");logAction(actor.role,actor.name,"DRIVE_SAVE_CSV","CSV export saved to Drive");}
+    else if(res.reason==="not_signed_in"){setDriveStatus("Sign-in requested — please complete the Google sign-in popup, then click again.");}
+    else{setDriveStatus("⚠ Drive save failed: "+(res.reason||"unknown error"));}
+  };
+
   const counts=Object.fromEntries(["schools","students","campTypes","sessions","registrations","crew","crewAssignments","payments","expenses","inventory","communications"].map(k=>[k,(db[k]||[]).length]));
   return <div>
-    <h2 style={{fontSize:20,fontWeight:800,marginBottom:18}}>Backup & Restore</h2>
-    {lastBackup&&<div style={{background:"#dcfce7",border:"1px solid #bbf7d0",borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:13,color:"#16a34a"}}>
-      ✓ Last backup: <b>{fmtDate(lastBackup)}</b>
-    </div>}
-    {!lastBackup&&<div style={{background:"#fef3c7",border:"1px solid #fde68a",borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:13,color:"#d97706"}}>
-      ⚠ No backup recorded yet. Export your data regularly to avoid loss.
-    </div>}
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Backup & Restore"]} onHome={onHome} title="Backup & Restore"/>
+    {lastBackup&&<div style={{background:"#dcfce7",border:"1px solid #bbf7d0",borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:13,color:"#16a34a"}}>✓ Last backup: <b>{fmtDate(lastBackup)}</b></div>}
+    {!lastBackup&&<div style={{background:"#fef3c7",border:"1px solid #fde68a",borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:13,color:"#d97706"}}>⚠ No backup recorded yet. Export your data regularly to avoid loss.</div>}
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8,marginBottom:20}}>
       {Object.entries({Schools:counts.schools,Students:counts.students,"Camp Types":counts.campTypes,Sessions:counts.sessions,Registrations:counts.registrations,Payments:counts.payments,Crew:counts.crew,Expenses:counts.expenses,Inventory:counts.inventory}).map(([k,v])=><div key={k} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 12px",textAlign:"center"}}>
         <div style={{fontSize:20,fontWeight:800,color:"var(--accent)"}}>{v}</div>
@@ -1090,36 +1249,39 @@ function BackupRestore({db,refresh}){
     <div style={{display:"grid",gap:14}}>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
         <div style={{fontWeight:700,fontSize:14,marginBottom:6}}>📊 Export as CSV (Excel-compatible)</div>
-        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>All modules in one file — Schools, Students, Sessions, Payments, Crew, Expenses, Inventory & more. Opens directly in Excel or Google Sheets with clearly labelled sections.</div>
-        <button onClick={exportCombinedCSV} style={{...btn("primary"),marginRight:8}}>⬇ Download CSV</button>
-        <span style={{fontSize:11,color:"var(--muted)"}}>Filename: happy-dino-export-YYYY-MM-DD.csv</span>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>All modules in one file. Opens directly in Excel or Google Sheets with clearly labelled sections.</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button onClick={exportCombinedCSV} style={btn("primary")}>⬇ Download CSV</button>
+          <button onClick={saveToDriveCSV} style={btn("blue")}>☁ Save CSV to Google Drive</button>
+        </div>
       </div>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
         <div style={{fontWeight:700,fontSize:14,marginBottom:6}}>💾 Export as JSON (Full Restore Backup)</div>
-        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Complete data backup that can be re-imported to fully restore the app. Use this for safekeeping. Recommended: export after every major session.</div>
-        <button onClick={exportJSON} style={{...btn("ghost"),marginRight:8}}>⬇ Download JSON</button>
-        <span style={{fontSize:11,color:"var(--muted)"}}>Filename: happy-dino-backup-YYYY-MM-DD.json</span>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Complete data backup that can be re-imported to fully restore the app.</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button onClick={exportJSON} style={btn("ghost")}>⬇ Download JSON</button>
+          <button onClick={saveToDriveJSON} style={btn("blue")}>☁ Save JSON to Google Drive</button>
+        </div>
       </div>
+      {driveStatus&&<div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 14px",fontSize:12,color:"var(--text)"}}>{driveStatus}</div>}
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
         <div style={{fontWeight:700,fontSize:14,marginBottom:6}}>⬆ Restore from Backup</div>
-        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Import a previously exported JSON file to restore all data. <b style={{color:"#ef4444"}}>Warning: this will overwrite all current data.</b></div>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}><b style={{color:"#ef4444"}}>Warning: this will overwrite all current data.</b></div>
         <label style={{...btn("danger"),display:"inline-block",cursor:"pointer"}}>⬆ Import JSON Backup <input type="file" accept=".json" style={{display:"none"}} onChange={importData}/></label>
+      </div>
+      <div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px",fontSize:11,color:"var(--muted)"}}>
+        ℹ️ Google Drive save requires this app to be hosted online (e.g. GitHub Pages) and your domain authorized in Google Cloud Console. It will not work when opening this file directly from your computer.
       </div>
     </div>
   </div>;
 }
 
 // ── SETTINGS ──
-function Settings({db,refresh}){
+function Settings({db,refresh,onHome}){
   const [form,setForm]=useState({...db.settings});
   const save=()=>{setDB({settings:form});refresh();alert("Settings saved!");};
-  const managePin=()=>{
-    const db2=getDB();const newPin=window.prompt("Enter new Admin PIN (4 digits):");
-    if(newPin&&/^\d{4}$/.test(newPin)){setDB({users:db2.users.map(u=>u.role==="admin"?{...u,pin:newPin}:u)});refresh();alert("Admin PIN updated!");}
-    else if(newPin)alert("PIN must be exactly 4 digits.");
-  };
   return <div>
-    <h2 style={{fontSize:20,fontWeight:800,marginBottom:18}}>Settings</h2>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Settings"]} onHome={onHome} title="Settings"/>
     <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18,marginBottom:16}}>
       <div style={{fontWeight:700,fontSize:13,marginBottom:12}}>Company Information</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
@@ -1132,28 +1294,24 @@ function Settings({db,refresh}){
       <Field label="Logo URL" hint="Direct image link — appears on invoices"><input style={inp} value={form.logo||""} onChange={e=>setForm({...form,logo:e.target.value})} placeholder="https://..."/></Field>
       <button onClick={save} style={btn("primary")}>Save Settings</button>
     </div>
-    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
-      <div style={{fontWeight:700,fontSize:13,marginBottom:8}}>User PINs</div>
-      <div style={{fontSize:12,color:"var(--muted)",marginBottom:12}}>Change login PINs for each role. Current PINs — Admin: 1234 · Finance: 5678 · Crew: 0000</div>
-      <button onClick={managePin} style={btn("ghost")}>🔑 Change Admin PIN</button>
-    </div>
   </div>;
 }
 
 // ── MAIN APP ──
 const MENU=[
-  {key:"dashboard",label:"Dashboard",icon:"🏠",roles:["admin","finance","crew"]},
-  {key:"schools",label:"Schools",icon:"🏫",roles:["admin"]},
-  {key:"students",label:"All Students",icon:"🎒",roles:["admin"]},
-  {key:"campTypes",label:"Camp Types",icon:"🦖",roles:["admin"]},
-  {key:"sessions",label:"Sessions",icon:"📅",roles:["admin","crew"]},
-  {key:"crew",label:"Crew",icon:"👥",roles:["admin"]},
-  {key:"inventory",label:"Inventory",icon:"📦",roles:["admin"]},
-  {key:"payments",label:"Payments",icon:"💳",roles:["admin","finance"]},
+  {key:"dashboard",label:"Dashboard",icon:"🏠",roles:["admin","finance","user"]},
+  {key:"schools",label:"Schools",icon:"🏫",roles:["admin","user"]},
+  {key:"students",label:"All Students",icon:"🎒",roles:["admin","user"]},
+  {key:"campTypes",label:"Camp Types",icon:"🦖",roles:["admin","user"]},
+  {key:"sessions",label:"Sessions",icon:"📅",roles:["admin","user"]},
+  {key:"crew",label:"Crew",icon:"👥",roles:["admin","user"]},
+  {key:"inventory",label:"Inventory",icon:"📦",roles:["admin","user"]},
+  {key:"payments",label:"Payments",icon:"💳",roles:["admin","finance","user"]},
   {key:"reports",label:"Reports",icon:"📊",roles:["admin","finance"]},
   {key:"communications",label:"Communications",icon:"💬",roles:["admin"]},
   {key:"backup",label:"Backup & Restore",icon:"📁",roles:["admin","finance"]},
-  {key:"settings",label:"Settings",icon:"⚙️",roles:["admin","finance"]},
+  {key:"auditlog",label:"Audit Log",icon:"📜",roles:["admin"]},
+  {key:"settings",label:"Settings",icon:"⚙️",roles:["admin"]},
 ];
 
 function App(){
@@ -1170,11 +1328,12 @@ function App(){
 
   const canAccess=(key)=>{const m=MENU.find(m=>m.key===key);return m?.roles.includes(user.role)||false;};
   const navigate=(key,filter)=>{if(canAccess(key)){setPage(key);setPageFilter(filter||null);setSidebarOpen(false);}};
+  const goBackToDashboard=()=>navigate("dashboard");
 
   return <div style={{display:"flex",minHeight:"100vh"}}>
     {sidebarOpen&&<div onClick={()=>setSidebarOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:90}}/>}
     {/* Sidebar */}
-    <div style={{width:210,background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",position:"fixed",top:0,left:0,height:"100vh",zIndex:100,transform:sidebarOpen?"translateX(0)":"translateX(-100%)",transition:"transform 0.2s ease"}}>
+    <div style={{width:215,background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",position:"fixed",top:0,left:0,height:"100vh",zIndex:100,transform:sidebarOpen?"translateX(0)":"translateX(-100%)",transition:"transform 0.2s ease"}}>
       <div style={{padding:"18px 14px 14px",borderBottom:"1px solid var(--border)"}}>
         <div style={{fontSize:16,fontWeight:800,color:"var(--accent)",fontFamily:"Georgia,serif"}}>🦕 Happy Dino</div>
         <div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>Xperience Camp</div>
@@ -1184,32 +1343,38 @@ function App(){
           <span>{m.icon}</span>{m.label}
         </button>)}
       </div>
-      {/* Logout always visible at bottom */}
       <div style={{padding:"12px 14px",borderTop:"1px solid var(--border)"}}>
-        <div style={{fontSize:11,color:"var(--muted)",marginBottom:8}}>{user.name} · {user.role}</div>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+          <span style={{fontSize:12,fontWeight:600}}>{user.name}</span>
+          <RoleBadge role={user.role}/>
+        </div>
         <button onClick={logout} style={{...btn("danger"),width:"100%",padding:"8px 12px",fontSize:12}}>🚪 Logout</button>
+        <div style={{fontSize:9,color:"var(--muted)",marginTop:8,textAlign:"center"}}>{APP_VERSION}</div>
       </div>
     </div>
     {/* Main */}
     <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh"}}>
-      <div style={{background:"var(--surface)",borderBottom:"1px solid var(--border)",padding:"10px 16px",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:"var(--surface)",borderBottom:"1px solid var(--border)",padding:"10px 16px",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:50,flexWrap:"wrap"}}>
         <button onClick={()=>setSidebarOpen(!sidebarOpen)} style={{background:"none",border:"none",cursor:"pointer",fontSize:22,color:"var(--text)",padding:"2px 6px",lineHeight:1}}>☰</button>
-        <span style={{fontWeight:700,fontSize:15,flex:1}}>{MENU.find(m=>m.key===page)?.label}</span>
-        <span style={{fontSize:11,color:"var(--muted)"}}>{user.name} · {user.role}</span>
+        <span style={{fontWeight:700,fontSize:15}}>{MENU.find(m=>m.key===page)?.label}</span>
+        {(user.role==="admin")&&<GlobalSearch db={db} onResultClick={navigate}/>}
+        <div style={{flex:1}}/>
+        <RoleBadge role={user.role}/>
       </div>
       <div style={{flex:1,padding:"20px 16px",maxWidth:960,width:"100%",margin:"0 auto"}}>
-        {page==="dashboard"&&<Dashboard db={db} navigate={navigate}/>}
-        {page==="schools"&&<Schools db={db} refresh={refresh}/>}
-        {page==="students"&&<Students db={db} refresh={refresh}/>}
-        {page==="campTypes"&&<CampTypes db={db} refresh={refresh}/>}
-        {page==="sessions"&&<Sessions db={db} refresh={refresh} initialFilter={pageFilter}/>}
-        {page==="crew"&&<Crew db={db} refresh={refresh}/>}
-        {page==="inventory"&&<Inventory db={db} refresh={refresh}/>}
-        {page==="payments"&&<Payments db={db} refresh={refresh} initialFilter={pageFilter}/>}
-        {page==="reports"&&<Reports db={db}/>}
-        {page==="communications"&&<Communications db={db} refresh={refresh}/>}
-        {page==="backup"&&<BackupRestore db={db} refresh={refresh}/>}
-        {page==="settings"&&<Settings db={db} refresh={refresh}/>}
+        {page==="dashboard"&&<Dashboard db={db} navigate={navigate} role={user.role}/>}
+        {page==="schools"&&<Schools db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="students"&&<Students db={db} refresh={refresh} onHome={goBackToDashboard} actor={user}/>}
+        {page==="campTypes"&&<CampTypes db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="sessions"&&<Sessions db={db} refresh={refresh} initialFilter={pageFilter} actor={user} onHome={goBackToDashboard}/>}
+        {page==="crew"&&<Crew db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="inventory"&&<Inventory db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="payments"&&<Payments db={db} refresh={refresh} initialFilter={pageFilter} role={user.role} actor={user} onHome={goBackToDashboard}/>}
+        {page==="reports"&&<Reports db={db} onHome={goBackToDashboard}/>}
+        {page==="communications"&&<Communications db={db} refresh={refresh} onHome={goBackToDashboard}/>}
+        {page==="backup"&&<BackupRestore db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="auditlog"&&<AuditLog db={db} onHome={goBackToDashboard}/>}
+        {page==="settings"&&<Settings db={db} refresh={refresh} onHome={goBackToDashboard}/>}
       </div>
     </div>
   </div>;
