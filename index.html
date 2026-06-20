@@ -26,7 +26,7 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.06.20-20:00";
+const APP_VERSION = "HD System v.2026.06.21-00:00";
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -215,8 +215,10 @@ function LoginScreen({onLogin}){
 function useGoogleDrive(){
   const [ready,setReady]=useState(false);
   const [signedIn,setSignedIn]=useState(false);
+  const [account,setAccount]=useState(null);
   const tokenClient=useRef(null);
   const accessToken=useRef(null);
+  const pendingResolve=useRef(null);
 
   useEffect(()=>{
     const check=setInterval(()=>{
@@ -228,23 +230,48 @@ function useGoogleDrive(){
               client_id:GOOGLE_CLIENT_ID,
               scope:DRIVE_SCOPE,
               callback:(resp)=>{
-                if(resp.access_token){accessToken.current=resp.access_token;setSignedIn(true);}
+                if(resp&&resp.access_token){
+                  accessToken.current=resp.access_token;
+                  setSignedIn(true);
+                  fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+resp.access_token}})
+                    .then(r=>r.ok?r.json():null).then(info=>{if(info)setAccount(info.email||info.name||"Google account");}).catch(()=>{});
+                  if(pendingResolve.current){pendingResolve.current({ok:true});pendingResolve.current=null;}
+                } else if(pendingResolve.current){
+                  pendingResolve.current({ok:false,reason:"No access token returned."});
+                  pendingResolve.current=null;
+                }
+              },
+              error_callback:(err)=>{
+                let reason="Sign-in was cancelled or blocked.";
+                if(err&&err.type==="popup_failed_to_open")reason="The sign-in popup was blocked by your browser. Please allow popups for this site and try again.";
+                else if(err&&err.type==="popup_closed")reason="The sign-in popup was closed before completing.";
+                if(pendingResolve.current){pendingResolve.current({ok:false,reason});pendingResolve.current=null;}
               }
             });
             setReady(true);
-          });
+          }).catch(e=>{setReady(false);console.error("Drive init failed",e);});
         });
       }
     },300);
-    return ()=>clearInterval(check);
+    const timeout=setTimeout(()=>clearInterval(check),15000);
+    return ()=>{clearInterval(check);clearTimeout(timeout);};
   },[]);
 
-  const requestAccess=()=>{
-    if(tokenClient.current)tokenClient.current.requestAccessToken();
+  // Returns a promise that resolves once the popup completes (success or failure),
+  // instead of returning immediately while the popup is still open.
+  const ensureSignedIn=()=>{
+    return new Promise((resolve)=>{
+      if(accessToken.current){resolve({ok:true});return;}
+      if(!tokenClient.current){resolve({ok:false,reason:"Google sign-in is still loading. Please wait a moment and try again."});return;}
+      pendingResolve.current=resolve;
+      try{tokenClient.current.requestAccessToken({prompt:"consent"});}
+      catch(e){pendingResolve.current=null;resolve({ok:false,reason:e.message});}
+    });
   };
 
   const uploadToDrive=async(filename,content,mimeType)=>{
-    if(!accessToken.current){requestAccess();return{ok:false,reason:"not_signed_in"};}
+    const auth=await ensureSignedIn();
+    if(!auth.ok)return{ok:false,reason:auth.reason};
     try{
       const metadata={name:filename,parents:[GOOGLE_DRIVE_FOLDER_ID]};
       const boundary="-------happydino_boundary";
@@ -259,15 +286,53 @@ function useGoogleDrive(){
         headers:{"Authorization":"Bearer "+accessToken.current,"Content-Type":"multipart/related; boundary="+boundary},
         body:multipartBody
       });
-      if(!res.ok){const t=await res.text();return{ok:false,reason:t};}
+      if(res.status===401){
+        // Token expired/invalid — clear and ask caller to retry, which will trigger a fresh sign-in.
+        accessToken.current=null;setSignedIn(false);
+        return{ok:false,reason:"Your Google session expired. Please click the button again to sign in and retry."};
+      }
+      if(!res.ok){const t=await res.text();return{ok:false,reason:`Drive API error (${res.status}): ${t.slice(0,200)}`};}
       const data=await res.json();
       return{ok:true,data};
     }catch(e){
-      return{ok:false,reason:e.message};
+      return{ok:false,reason:"Network error: "+e.message};
     }
   };
 
-  return{ready,signedIn,requestAccess,uploadToDrive};
+  // List files previously saved by this app in the target Drive folder, for the Load-from-Drive feature.
+  const listDriveFiles=async()=>{
+    const auth=await ensureSignedIn();
+    if(!auth.ok)return{ok:false,reason:auth.reason};
+    try{
+      const q=encodeURIComponent(`'${GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false`);
+      const res=await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime,mimeType)&orderBy=modifiedTime desc&pageSize=50`,{
+        headers:{"Authorization":"Bearer "+accessToken.current}
+      });
+      if(res.status===401){accessToken.current=null;setSignedIn(false);return{ok:false,reason:"Your Google session expired. Please click again to sign in and retry."};}
+      if(!res.ok){const t=await res.text();return{ok:false,reason:`Drive API error (${res.status}): ${t.slice(0,200)}`};}
+      const data=await res.json();
+      return{ok:true,files:data.files||[]};
+    }catch(e){
+      return{ok:false,reason:"Network error: "+e.message};
+    }
+  };
+
+  const downloadDriveFile=async(fileId)=>{
+    const auth=await ensureSignedIn();
+    if(!auth.ok)return{ok:false,reason:auth.reason};
+    try{
+      const res=await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,{
+        headers:{"Authorization":"Bearer "+accessToken.current}
+      });
+      if(!res.ok){const t=await res.text();return{ok:false,reason:`Drive API error (${res.status}): ${t.slice(0,200)}`};}
+      const text=await res.text();
+      return{ok:true,content:text};
+    }catch(e){
+      return{ok:false,reason:"Network error: "+e.message};
+    }
+  };
+
+  return{ready,signedIn,account,uploadToDrive,listDriveFiles,downloadDriveFile};
 }
 
 // ── INVOICE PDF ──
@@ -1130,6 +1195,10 @@ function AuditLog({db,onHome}){
 function BackupRestore({db,refresh,actor,onHome}){
   const [lastBackup,setLastBackup]=useState(()=>localStorage.getItem("happyDino_lastBackup")||null);
   const [driveStatus,setDriveStatus]=useState("");
+  const [driveBusy,setDriveBusy]=useState(false);
+  const [showDriveFiles,setShowDriveFiles]=useState(false);
+  const [driveFiles,setDriveFiles]=useState([]);
+  const [driveFilesLoading,setDriveFilesLoading]=useState(false);
   const drive=useGoogleDrive();
   const esc=(v)=>{if(v==null)return"";const s=String(v);if(s.includes(",")||s.includes('"')||s.includes("\n"))return`"${s.replace(/"/g,'""')}"`;return s;};
   const row=(...cells)=>cells.map(esc).join(",")+"\n";
@@ -1226,83 +1295,156 @@ function BackupRestore({db,refresh,actor,onHome}){
     return csv;
   };
 
-  const exportCombinedCSV=()=>{
+  const markBackedUp=()=>{const now=new Date().toISOString();localStorage.setItem("happyDino_lastBackup",now);setLastBackup(now);};
+
+  // ---- SAVE: LOCAL ----
+  const saveLocalCSV=()=>{
     const csv=buildCombinedCSV();
     const ts=new Date().toISOString().slice(0,10);
     const a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);a.download=`happy-dino-export-${ts}.csv`;a.click();
-    const now=new Date().toISOString();localStorage.setItem("happyDino_lastBackup",now);setLastBackup(now);
-    logAction(actor.role,actor.name,"EXPORT_CSV","Combined CSV exported");
+    markBackedUp();
+    logAction(actor.role,actor.name,"EXPORT_CSV","Combined CSV downloaded locally");
   };
-  const exportJSON=()=>{
+  const saveLocalJSON=()=>{
     const data=JSON.stringify(getDB(),null,2);
     const ts=new Date().toISOString().slice(0,10);
     const a=document.createElement("a");a.href="data:application/json;charset=utf-8,"+encodeURIComponent(data);a.download=`happy-dino-backup-${ts}.json`;a.click();
-    const now=new Date().toISOString();localStorage.setItem("happyDino_lastBackup",now);setLastBackup(now);
-    logAction(actor.role,actor.name,"EXPORT_JSON","Full JSON backup exported");
+    markBackedUp();
+    logAction(actor.role,actor.name,"EXPORT_JSON","Full JSON backup downloaded locally");
   };
-  const importData=(e)=>{
+
+  // ---- LOAD: LOCAL ----
+  const loadLocalJSON=(e)=>{
     const file=e.target.files[0];if(!file)return;
     const reader=new FileReader();
-    reader.onload=(ev)=>{try{saveDB(JSON.parse(ev.target.result));refresh();logAction(actor.role,actor.name,"IMPORT_DATA","Restored from JSON backup");alert("Data imported successfully!");e.target.value="";}catch{alert("Invalid backup file.");}};
+    reader.onload=(ev)=>{
+      try{
+        saveDB(JSON.parse(ev.target.result));
+        refresh();
+        logAction(actor.role,actor.name,"IMPORT_DATA","Restored from local JSON backup");
+        alert("Data restored successfully from local file!");
+        e.target.value="";
+      }catch{alert("Invalid backup file — please choose a valid Happy Dino JSON backup.");}
+    };
     reader.readAsText(file);
   };
 
+  // ---- SAVE: GOOGLE DRIVE ----
   const saveToDriveJSON=async()=>{
-    setDriveStatus("Connecting to Google Drive...");
+    setDriveBusy(true);setDriveStatus("Connecting to Google Drive...");
     const data=JSON.stringify(getDB(),null,2);
     const ts=new Date().toISOString().slice(0,10);
     const res=await drive.uploadToDrive(`happy-dino-backup-${ts}.json`,data,"application/json");
-    if(res.ok){setDriveStatus("✓ Saved to Google Drive successfully!");logAction(actor.role,actor.name,"DRIVE_SAVE_JSON","Backup saved to Drive");}
-    else if(res.reason==="not_signed_in"){setDriveStatus("Sign-in requested — please complete the Google sign-in popup, then click again.");}
-    else{setDriveStatus("⚠ Drive save failed: "+(res.reason||"unknown error"));}
+    if(res.ok){setDriveStatus(`✓ Saved "happy-dino-backup-${ts}.json" to Google Drive successfully!`);markBackedUp();logAction(actor.role,actor.name,"DRIVE_SAVE_JSON","Backup saved to Drive");}
+    else{setDriveStatus("⚠ "+(res.reason||"Drive save failed for an unknown reason."));}
+    setDriveBusy(false);
   };
   const saveToDriveCSV=async()=>{
-    setDriveStatus("Connecting to Google Drive...");
+    setDriveBusy(true);setDriveStatus("Connecting to Google Drive...");
     const csv=buildCombinedCSV();
     const ts=new Date().toISOString().slice(0,10);
     const res=await drive.uploadToDrive(`happy-dino-export-${ts}.csv`,csv,"text/csv");
-    if(res.ok){setDriveStatus("✓ Saved to Google Drive successfully!");logAction(actor.role,actor.name,"DRIVE_SAVE_CSV","CSV export saved to Drive");}
-    else if(res.reason==="not_signed_in"){setDriveStatus("Sign-in requested — please complete the Google sign-in popup, then click again.");}
-    else{setDriveStatus("⚠ Drive save failed: "+(res.reason||"unknown error"));}
+    if(res.ok){setDriveStatus(`✓ Saved "happy-dino-export-${ts}.csv" to Google Drive successfully!`);markBackedUp();logAction(actor.role,actor.name,"DRIVE_SAVE_CSV","CSV export saved to Drive");}
+    else{setDriveStatus("⚠ "+(res.reason||"Drive save failed for an unknown reason."));}
+    setDriveBusy(false);
+  };
+
+  // ---- LOAD: GOOGLE DRIVE ----
+  const browseDriveFiles=async()=>{
+    setShowDriveFiles(true);setDriveFilesLoading(true);setDriveStatus("");
+    const res=await drive.listDriveFiles();
+    if(res.ok){setDriveFiles(res.files.filter(f=>f.name.endsWith(".json")));}
+    else{setDriveStatus("⚠ "+(res.reason||"Could not list Drive files."));setShowDriveFiles(false);}
+    setDriveFilesLoading(false);
+  };
+  const restoreFromDriveFile=async(file)=>{
+    if(!window.confirm(`Restore from "${file.name}"? This will overwrite all current data.`))return;
+    setDriveBusy(true);setDriveStatus(`Downloading "${file.name}"...`);
+    const res=await drive.downloadDriveFile(file.id);
+    if(res.ok){
+      try{
+        saveDB(JSON.parse(res.content));
+        refresh();
+        setDriveStatus(`✓ Restored from "${file.name}" successfully!`);
+        logAction(actor.role,actor.name,"DRIVE_RESTORE",`Restored from Drive file: ${file.name}`);
+        setShowDriveFiles(false);
+      }catch{setDriveStatus("⚠ That file isn't a valid Happy Dino JSON backup.");}
+    }else{setDriveStatus("⚠ "+(res.reason||"Could not download that file."));}
+    setDriveBusy(false);
   };
 
   const counts=Object.fromEntries(["schools","students","campTypes","sessions","registrations","crew","crewAssignments","payments","expenses","inventory","communications"].map(k=>[k,(db[k]||[]).length]));
+
   return <div>
     <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Backup & Restore"]} onHome={onHome} title="Backup & Restore"/>
     {lastBackup&&<div style={{background:"#dcfce7",border:"1px solid #bbf7d0",borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:13,color:"#16a34a"}}>✓ Last backup: <b>{fmtDate(lastBackup)}</b></div>}
     {!lastBackup&&<div style={{background:"#fef3c7",border:"1px solid #fde68a",borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:13,color:"#d97706"}}>⚠ No backup recorded yet. Export your data regularly to avoid loss.</div>}
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8,marginBottom:20}}>
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8,marginBottom:24}}>
       {Object.entries({Schools:counts.schools,Students:counts.students,"Camp Types":counts.campTypes,Sessions:counts.sessions,Registrations:counts.registrations,Payments:counts.payments,Crew:counts.crew,Expenses:counts.expenses,Inventory:counts.inventory}).map(([k,v])=><div key={k} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 12px",textAlign:"center"}}>
         <div style={{fontSize:20,fontWeight:800,color:"var(--accent)"}}>{v}</div>
         <div style={{fontSize:11,color:"var(--muted)",fontWeight:600}}>{k}</div>
       </div>)}
     </div>
-    <div style={{display:"grid",gap:14}}>
+
+    {/* ===== SAVE SECTION ===== */}
+    <SectionHeader label="💾 Save Backup"/>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:14,marginBottom:24}}>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
-        <div style={{fontWeight:700,fontSize:14,marginBottom:6}}>📊 Export as CSV (Excel-compatible)</div>
-        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>All modules in one file. Opens directly in Excel or Google Sheets with clearly labelled sections.</div>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>🖥️ Save to This Device</div>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Downloads a file to your computer or phone's Downloads folder.</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          <button onClick={exportCombinedCSV} style={btn("primary")}>⬇ Download CSV</button>
-          <button onClick={saveToDriveCSV} style={btn("blue")}>☁ Save CSV to Google Drive</button>
+          <button onClick={saveLocalCSV} style={btn("primary")}>⬇ CSV (Excel)</button>
+          <button onClick={saveLocalJSON} style={btn("ghost")}>⬇ JSON (Full)</button>
         </div>
       </div>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
-        <div style={{fontWeight:700,fontSize:14,marginBottom:6}}>💾 Export as JSON (Full Restore Backup)</div>
-        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Complete data backup that can be re-imported to fully restore the app.</div>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>☁️ Save to Google Drive {drive.account&&<Badge label={drive.account} color="green"/>}</div>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Saves directly into your team's shared Drive folder. First use will ask you to sign in.</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          <button onClick={exportJSON} style={btn("ghost")}>⬇ Download JSON</button>
-          <button onClick={saveToDriveJSON} style={btn("blue")}>☁ Save JSON to Google Drive</button>
+          <button onClick={saveToDriveCSV} disabled={driveBusy} style={{...btn("blue"),opacity:driveBusy?0.6:1}}>☁ CSV to Drive</button>
+          <button onClick={saveToDriveJSON} disabled={driveBusy} style={{...btn("blue"),opacity:driveBusy?0.6:1}}>☁ JSON to Drive</button>
         </div>
       </div>
-      {driveStatus&&<div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 14px",fontSize:12,color:"var(--text)"}}>{driveStatus}</div>}
+    </div>
+
+    {/* ===== LOAD / RESTORE SECTION ===== */}
+    <SectionHeader label="⬆ Load / Restore Backup"/>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:14,marginBottom:16}}>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
-        <div style={{fontWeight:700,fontSize:14,marginBottom:6}}>⬆ Restore from Backup</div>
-        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}><b style={{color:"#ef4444"}}>Warning: this will overwrite all current data.</b></div>
-        <label style={{...btn("danger"),display:"inline-block",cursor:"pointer"}}>⬆ Import JSON Backup <input type="file" accept=".json" style={{display:"none"}} onChange={importData}/></label>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>🖥️ Restore from This Device</div>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}><b style={{color:"#ef4444"}}>Warning:</b> overwrites all current data with the file you choose.</div>
+        <label style={{...btn("danger"),display:"inline-block",cursor:"pointer"}}>⬆ Choose JSON File <input type="file" accept=".json" style={{display:"none"}} onChange={loadLocalJSON}/></label>
       </div>
-      <div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px",fontSize:11,color:"var(--muted)"}}>
-        ℹ️ Google Drive save requires this app to be hosted online (e.g. GitHub Pages) and your domain authorized in Google Cloud Console. It will not work when opening this file directly from your computer.
+      <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>☁️ Restore from Google Drive</div>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Browse and restore from a backup previously saved to Drive.</div>
+        <button onClick={browseDriveFiles} disabled={driveBusy} style={{...btn("blue"),opacity:driveBusy?0.6:1}}>☁ Browse Drive Backups</button>
       </div>
+    </div>
+
+    {showDriveFiles&&<div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:16,marginBottom:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{fontWeight:700,fontSize:13}}>Backups found in Drive folder</div>
+        <button onClick={()=>setShowDriveFiles(false)} style={{...btn("ghost"),padding:"4px 10px",fontSize:11}}>Close</button>
+      </div>
+      {driveFilesLoading?<div style={{fontSize:12,color:"var(--muted)"}}>Loading...</div>:
+        driveFiles.length===0?<div style={{fontSize:12,color:"var(--muted)"}}>No JSON backup files found in the Drive folder yet.</div>:
+        <div style={{display:"grid",gap:6}}>
+          {driveFiles.map(f=><div key={f.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,padding:"8px 12px",background:"var(--surface2)",borderRadius:8}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:600}}>{f.name}</div>
+              <div style={{fontSize:11,color:"var(--muted)"}}>Modified: {fmtDateTime(f.modifiedTime)}</div>
+            </div>
+            <button onClick={()=>restoreFromDriveFile(f)} disabled={driveBusy} style={{...btn("danger"),fontSize:11,padding:"4px 10px"}}>Restore this</button>
+          </div>)}
+        </div>}
+    </div>}
+
+    {driveStatus&&<div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 14px",fontSize:12,color:"var(--text)",marginBottom:16}}>{driveStatus}</div>}
+
+    <div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px",fontSize:11,color:"var(--muted)"}}>
+      ℹ️ Google Drive save/load requires this app to be hosted online (e.g. GitHub Pages) with your domain authorized in Google Cloud Console. It will not work when opening this file directly from your computer. If a sign-in popup doesn't appear, check that your browser isn't blocking popups for this site.
     </div>
   </div>;
 }
