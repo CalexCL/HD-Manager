@@ -44,7 +44,21 @@ const initialDB={
   ],
   schools:[],students:[],campTypes:[],sessions:[],registrations:[],crew:[],crewAssignments:[],payments:[],expenses:[],inventory:[],communications:[],auditLog:[]
 };
-function getDB(){const s=loadDB();return{...initialDB,...s};}
+function getDB(){
+  const s=loadDB();
+  const merged={...initialDB,...s};
+  // One-time migration: older versions of this app stored 4-digit PINs in localStorage.
+  // If the stored users still look like the old PIN-based seed (or are missing the
+  // password field entirely), force them back to the current password-based seed so
+  // logins don't silently break after an update.
+  const looksLikeOldPinUsers = !Array.isArray(merged.users) || merged.users.length===0 ||
+    merged.users.some(u=>!u.password || /^\d{4}$/.test(u.password||""));
+  if(looksLikeOldPinUsers){
+    merged.users = initialDB.users;
+    saveDB(merged);
+  }
+  return merged;
+}
 function setDB(partial){const db=getDB();saveDB({...db,...partial});}
 
 // ── AUDIT LOG ──
