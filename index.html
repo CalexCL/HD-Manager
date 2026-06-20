@@ -26,7 +26,7 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.06.20-19:00";
+const APP_VERSION = "HD System v.2026.06.20-20:00";
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -38,23 +38,37 @@ const saveDB=(db)=>localStorage.setItem(DB_KEY,JSON.stringify(db));
 const initialDB={
   settings:{companyName:"Happy Dino Xperience Camp",logo:"",address:"",tin:"",phone:"",email:""},
   users:[
-    {id:"u1",name:"Admin",role:"admin",password:"@555*123"},
-    {id:"u2",name:"Finance",role:"finance",password:"@555*$*"},
-    {id:"u3",name:"User",role:"user",password:"@123*"}
+    {id:"u1",name:"Admin",loginId:"admin",role:"admin",password:"@555*123"},
+    {id:"u2",name:"Finance",loginId:"finance",role:"finance",password:"@555*$*"},
+    {id:"u3",name:"User",loginId:"user",role:"user",password:"@123*"}
   ],
   schools:[],students:[],campTypes:[],sessions:[],registrations:[],crew:[],crewAssignments:[],payments:[],expenses:[],inventory:[],communications:[],auditLog:[]
 };
 function getDB(){
   const s=loadDB();
   const merged={...initialDB,...s};
-  // One-time migration: older versions of this app stored 4-digit PINs in localStorage.
-  // If the stored users still look like the old PIN-based seed (or are missing the
-  // password field entirely), force them back to the current password-based seed so
-  // logins don't silently break after an update.
+  // Migration 1: oldest versions stored 4-digit PINs. If that's still the case
+  // (or users array is missing/empty), reset to the current default seed.
   const looksLikeOldPinUsers = !Array.isArray(merged.users) || merged.users.length===0 ||
     merged.users.some(u=>!u.password || /^\d{4}$/.test(u.password||""));
   if(looksLikeOldPinUsers){
     merged.users = initialDB.users;
+    saveDB(merged);
+  }
+  // Migration 2: password-only version (no loginId field) — add a loginId to every
+  // existing user instead of wiping them, so custom accounts already created aren't lost.
+  const missingLoginId = merged.users.some(u=>!u.loginId);
+  if(missingLoginId){
+    const seedById = Object.fromEntries(initialDB.users.map(u=>[u.id,u.loginId]));
+    const used = new Set();
+    merged.users = merged.users.map(u=>{
+      if(u.loginId){used.add(u.loginId.toLowerCase());return u;}
+      let base = seedById[u.id] || (u.name||"user").toLowerCase().replace(/[^a-z0-9]/g,"")||"user";
+      let candidate = base, n=1;
+      while(used.has(candidate)){candidate = base + (++n);}
+      used.add(candidate);
+      return {...u, loginId:candidate};
+    });
     saveDB(merged);
   }
   return merged;
@@ -158,22 +172,23 @@ function PageHeader({crumbs,onBack,onHome,title,action}){
 // ── AUTH ──
 function useAuth(){
   const [user,setUser]=useState(null);
-  const login=(password)=>{const db=getDB();const found=db.users.find(u=>u.password===password);if(found){setUser(found);logAction(found.role,found.name,"LOGIN",`${found.name} logged in`);return true;}return false;};
+  const login=(loginId,password)=>{const db=getDB();const found=db.users.find(u=>u.loginId?.toLowerCase()===String(loginId||"").toLowerCase()&&u.password===password);if(found){setUser(found);logAction(found.role,found.name,"LOGIN",`${found.name} logged in`);return true;}return false;};
   const logout=()=>{if(user)logAction(user.role,user.name,"LOGOUT",`${user.name} logged out`);setUser(null);};
   return{user,login,logout};
 }
 
 // ── LOGIN ──
 function LoginScreen({onLogin}){
+  const [loginId,setLoginId]=useState("");
   const [password,setPassword]=useState("");
   const [err,setErr]=useState("");
   const [detectedRole,setDetectedRole]=useState(null);
   useEffect(()=>{
     const db=getDB();
-    const found=db.users.find(u=>u.password===password);
+    const found=db.users.find(u=>u.loginId?.toLowerCase()===loginId.toLowerCase()&&u.password===password&&loginId&&password);
     setDetectedRole(found?found.role:null);
-  },[password]);
-  const handle=()=>{if(!onLogin(password)){setErr("Invalid password");setPassword("");setDetectedRole(null);}};
+  },[loginId,password]);
+  const handle=()=>{if(!onLogin(loginId,password)){setErr("Invalid login ID or password");setPassword("");setDetectedRole(null);}};
   const r=detectedRole?ROLE_COLORS[detectedRole]:null;
   return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)"}}>
     <div style={{textAlign:"center",width:320}}>
@@ -181,8 +196,10 @@ function LoginScreen({onLogin}){
       <div style={{fontSize:22,fontWeight:800,color:"var(--accent)",fontFamily:"Georgia,serif"}}>Happy Dino</div>
       <div style={{fontSize:12,color:"var(--muted)",marginBottom:28}}>Xperience Camp Manager</div>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:16,padding:24}}>
-        <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",marginBottom:10}}>ENTER PASSWORD</div>
-        <input type="password" value={password} onChange={e=>{setPassword(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="Password" style={{...inp,textAlign:"center",fontSize:18,letterSpacing:2,marginBottom:10}}/>
+        <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",marginBottom:10,textAlign:"left"}}>LOGIN ID</div>
+        <input type="text" autoCapitalize="none" autoCorrect="off" value={loginId} onChange={e=>{setLoginId(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="Login ID" style={{...inp,fontSize:15,marginBottom:14}}/>
+        <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",marginBottom:10,textAlign:"left"}}>PASSWORD</div>
+        <input type="password" value={password} onChange={e=>{setPassword(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="Password" style={{...inp,fontSize:15,marginBottom:10}}/>
         {r&&<div style={{marginBottom:10,padding:"8px 0",borderRadius:8,background:r.bg}}>
           <div style={{fontSize:16,fontWeight:900,color:r.text,letterSpacing:"0.06em"}}>LOGGING IN AS {r.label}</div>
         </div>}
@@ -1311,6 +1328,90 @@ function Settings({db,refresh,onHome}){
   </div>;
 }
 
+// ── MANAGE USERS (Admin only) ──
+function ManageUsers({db,refresh,actor,onHome}){
+  const [showModal,setShowModal]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [form,setForm]=useState({});
+  const [err,setErr]=useState("");
+  const users=db.users||[];
+
+  const openAdd=()=>{setForm({id:uid(),name:"",loginId:"",password:"",role:"user"});setEditing(null);setErr("");setShowModal(true);};
+  const openEdit=(u)=>{setForm({...u});setEditing(u.id);setErr("");setShowModal(true);};
+
+  const save=()=>{
+    const cleanId=(form.loginId||"").trim().toLowerCase();
+    if(!form.name?.trim()){setErr("Name is required.");return;}
+    if(!cleanId){setErr("Login ID is required.");return;}
+    if(!form.password){setErr("Password is required.");return;}
+    const dup=users.find(u=>u.loginId?.toLowerCase()===cleanId&&u.id!==form.id);
+    if(dup){setErr("That Login ID is already taken.");return;}
+    const record={...form,loginId:cleanId};
+    const list=editing?users.map(u=>u.id===editing?record:u):[...users,record];
+    setDB({users:list});
+    logAction(actor.role,actor.name,editing?"EDIT_USER":"ADD_USER",`${record.name} (${record.loginId}, ${record.role})`);
+    refresh();setShowModal(false);
+  };
+
+  const del=(u)=>{
+    const adminCount=users.filter(x=>x.role==="admin").length;
+    if(u.role==="admin"&&adminCount<=1){alert("Cannot delete the last remaining Admin account.");return;}
+    if(u.id===actor.id){alert("You cannot delete the account you're currently logged in as.");return;}
+    if(window.confirm(`Delete user "${u.name}"?`)){
+      setDB({users:users.filter(x=>x.id!==u.id)});
+      logAction(actor.role,actor.name,"DELETE_USER",`${u.name} (${u.loginId})`);
+      refresh();
+    }
+  };
+
+  return <div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Manage Users"]} onHome={onHome} title="Manage Users" action={<button onClick={openAdd} style={btn("primary")}>+ Add User</button>}/>
+    <div style={{fontSize:12,color:"var(--muted)",marginTop:-12,marginBottom:14}}>Each user logs in with their own Login ID and Password. Actions they take are recorded under their name in the Audit Log.</div>
+    <div style={{display:"grid",gap:10}}>
+      {users.map(u=>{
+        const actionCount=(db.auditLog||[]).filter(a=>a.name===u.name).length;
+        return <div key={u.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"14px 16px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,alignItems:"center"}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{fontWeight:700,fontSize:14}}>{u.name}</div>
+                <RoleBadge role={u.role}/>
+                {u.id===actor.id&&<Badge label="You" color="blue"/>}
+              </div>
+              <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Login ID: <b>{u.loginId}</b> · {actionCount} logged action{actionCount===1?"":"s"}</div>
+            </div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"flex-start"}}>
+              <button onClick={()=>openEdit(u)} style={btn("ghost")}>Edit</button>
+              <button onClick={()=>del(u)} style={btn("danger")}>Del</button>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>
+    {showModal&&<Modal title={editing?"Edit User":"Add User"} onClose={()=>setShowModal(false)}>
+      <Field label="Full Name"><input style={inp} value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
+      <Field label="Login ID" hint="Used to log in, e.g. ali.hassan — not case-sensitive">
+        <input style={inp} value={form.loginId||""} onChange={e=>setForm({...form,loginId:e.target.value})} autoCapitalize="none" autoCorrect="off"/>
+      </Field>
+      <Field label="Password" hint={editing?"Leave unchanged or type a new password to reset it":""}>
+        <input style={inp} value={form.password||""} onChange={e=>setForm({...form,password:e.target.value})}/>
+      </Field>
+      <Field label="Role">
+        <select style={inp} value={form.role||"user"} onChange={e=>setForm({...form,role:e.target.value})}>
+          <option value="admin">Admin — full access</option>
+          <option value="finance">Finance — payments, reports, backup</option>
+          <option value="user">User — data entry, no revenue view</option>
+        </select>
+      </Field>
+      {err&&<div style={{color:"#ef4444",fontSize:12,marginBottom:10}}>{err}</div>}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+        <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
+        <button onClick={save} style={btn("primary")}>Save</button>
+      </div>
+    </Modal>}
+  </div>;
+}
+
 // ── MAIN APP ──
 const MENU=[
   {key:"dashboard",label:"Dashboard",icon:"🏠",roles:["admin","finance","user"]},
@@ -1326,6 +1427,7 @@ const MENU=[
   {key:"backup",label:"Backup & Restore",icon:"📁",roles:["admin","finance"]},
   {key:"auditlog",label:"Audit Log",icon:"📜",roles:["admin"]},
   {key:"settings",label:"Settings",icon:"⚙️",roles:["admin"]},
+  {key:"manageUsers",label:"Manage Users",icon:"🔐",roles:["admin"]},
 ];
 
 function App(){
@@ -1389,6 +1491,7 @@ function App(){
         {page==="backup"&&<BackupRestore db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
         {page==="auditlog"&&<AuditLog db={db} onHome={goBackToDashboard}/>}
         {page==="settings"&&<Settings db={db} refresh={refresh} onHome={goBackToDashboard}/>}
+        {page==="manageUsers"&&<ManageUsers db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
       </div>
     </div>
   </div>;
