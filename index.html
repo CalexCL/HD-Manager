@@ -26,10 +26,10 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.06.21-00:00";
+const APP_VERSION = "HD System v.2026.06.21-00:45";
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.file";
 
 // ── STORAGE ──
 const DB_KEY="happyDino_v1";
@@ -259,18 +259,27 @@ function useGoogleDrive(){
 
   // Returns a promise that resolves once the popup completes (success or failure),
   // instead of returning immediately while the popup is still open.
-  const ensureSignedIn=()=>{
+  // forcePicker=true always shows Google's account chooser, so the person can pick
+  // the correct account even if the browser has another one signed in already.
+  const ensureSignedIn=(forcePicker)=>{
     return new Promise((resolve)=>{
-      if(accessToken.current){resolve({ok:true});return;}
+      if(accessToken.current&&!forcePicker){resolve({ok:true});return;}
       if(!tokenClient.current){resolve({ok:false,reason:"Google sign-in is still loading. Please wait a moment and try again."});return;}
       pendingResolve.current=resolve;
-      try{tokenClient.current.requestAccessToken({prompt:"consent"});}
+      try{tokenClient.current.requestAccessToken({prompt:forcePicker?"select_account":"consent"});}
       catch(e){pendingResolve.current=null;resolve({ok:false,reason:e.message});}
     });
   };
 
+  // Clears the current token/account and immediately re-prompts with the account
+  // picker, so the person can switch to a different Google account.
+  const switchAccount=async()=>{
+    accessToken.current=null;setSignedIn(false);setAccount(null);
+    return await ensureSignedIn(true);
+  };
+
   const uploadToDrive=async(filename,content,mimeType)=>{
-    const auth=await ensureSignedIn();
+    const auth=await ensureSignedIn(false);
     if(!auth.ok)return{ok:false,reason:auth.reason};
     try{
       const metadata={name:filename,parents:[GOOGLE_DRIVE_FOLDER_ID]};
@@ -301,7 +310,7 @@ function useGoogleDrive(){
 
   // List files previously saved by this app in the target Drive folder, for the Load-from-Drive feature.
   const listDriveFiles=async()=>{
-    const auth=await ensureSignedIn();
+    const auth=await ensureSignedIn(false);
     if(!auth.ok)return{ok:false,reason:auth.reason};
     try{
       const q=encodeURIComponent(`'${GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false`);
@@ -318,7 +327,7 @@ function useGoogleDrive(){
   };
 
   const downloadDriveFile=async(fileId)=>{
-    const auth=await ensureSignedIn();
+    const auth=await ensureSignedIn(false);
     if(!auth.ok)return{ok:false,reason:auth.reason};
     try{
       const res=await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,{
@@ -332,7 +341,7 @@ function useGoogleDrive(){
     }
   };
 
-  return{ready,signedIn,account,uploadToDrive,listDriveFiles,downloadDriveFile};
+  return{ready,signedIn,account,uploadToDrive,listDriveFiles,downloadDriveFile,switchAccount};
 }
 
 // ── INVOICE PDF ──
@@ -1330,6 +1339,13 @@ function BackupRestore({db,refresh,actor,onHome}){
   };
 
   // ---- SAVE: GOOGLE DRIVE ----
+  const switchGoogleAccount=async()=>{
+    setDriveBusy(true);setDriveStatus("Opening Google account picker...");
+    const res=await drive.switchAccount();
+    if(res.ok){setDriveStatus(`✓ Switched account — now signed in as ${drive.account||"the selected account"}.`);}
+    else{setDriveStatus("⚠ "+(res.reason||"Could not switch account."));}
+    setDriveBusy(false);
+  };
   const saveToDriveJSON=async()=>{
     setDriveBusy(true);setDriveStatus("Connecting to Google Drive...");
     const data=JSON.stringify(getDB(),null,2);
@@ -1399,8 +1415,13 @@ function BackupRestore({db,refresh,actor,onHome}){
         </div>
       </div>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
-        <div style={{fontWeight:700,fontSize:14,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>☁️ Save to Google Drive {drive.account&&<Badge label={drive.account} color="green"/>}</div>
-        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Saves directly into your team's shared Drive folder. First use will ask you to sign in.</div>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:4,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>☁️ Save to Google Drive</div>
+        {drive.account?
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10}}>
+            <Badge label={`Signed in as ${drive.account}`} color="green"/>
+            <button onClick={switchGoogleAccount} disabled={driveBusy} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Switch account</button>
+          </div>
+          :<div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Saves directly into your team's shared Drive folder. First use will ask you to sign in — make sure to pick the correct Google account if you have more than one.</div>}
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button onClick={saveToDriveCSV} disabled={driveBusy} style={{...btn("blue"),opacity:driveBusy?0.6:1}}>☁ CSV to Drive</button>
           <button onClick={saveToDriveJSON} disabled={driveBusy} style={{...btn("blue"),opacity:driveBusy?0.6:1}}>☁ JSON to Drive</button>
@@ -1444,7 +1465,7 @@ function BackupRestore({db,refresh,actor,onHome}){
     {driveStatus&&<div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 14px",fontSize:12,color:"var(--text)",marginBottom:16}}>{driveStatus}</div>}
 
     <div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px",fontSize:11,color:"var(--muted)"}}>
-      ℹ️ Google Drive save/load requires this app to be hosted online (e.g. GitHub Pages) with your domain authorized in Google Cloud Console. It will not work when opening this file directly from your computer. If a sign-in popup doesn't appear, check that your browser isn't blocking popups for this site.
+      ℹ️ Google Drive save/load requires this app to be hosted online (e.g. GitHub Pages) with your domain authorized in Google Cloud Console. It will not work when opening this file directly from your computer. If a sign-in popup doesn't appear, check that your browser isn't blocking popups for this site. If a save reports success but the file isn't visible in your folder, use "Switch account" above to confirm you're signed into the same Google account that owns the target Drive folder — saves go to whichever account was used to sign in.
     </div>
   </div>;
 }
