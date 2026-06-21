@@ -26,7 +26,7 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.06.21-01:15";
+const APP_VERSION = "HD System v.2026.06.21-11:45";
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -36,7 +36,7 @@ const DB_KEY="happyDino_v1";
 const loadDB=()=>{try{return JSON.parse(localStorage.getItem(DB_KEY)||"{}");}catch{return{};}};
 const saveDB=(db)=>localStorage.setItem(DB_KEY,JSON.stringify(db));
 const initialDB={
-  settings:{companyName:"Happy Dino Xperience Camp",logo:"",address:"",tin:"",phone:"",email:""},
+  settings:{companyName:"Happy Dino Xperience Camp",logo:"",address:"",tin:"",phone:"",email:"",exportPin:""},
   users:[
     {id:"u1",name:"Admin",loginId:"admin",role:"admin",password:"@555*123"},
     {id:"u2",name:"Finance",loginId:"finance",role:"finance",password:"@555*$*"},
@@ -90,13 +90,53 @@ const fmtDate=(d)=>d?new Date(d).toLocaleDateString("en-MY",{day:"2-digit",month
 const fmtDateTime=(d)=>d?new Date(d).toLocaleString("en-MY",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—";
 const calcAge=(dob)=>{if(!dob)return"—";return Math.floor((Date.now()-new Date(dob).getTime())/(1000*60*60*24*365.25));};
 
+// ── ENCRYPTION (Web Crypto, AES-GCM) ──
+// Used to protect any file that leaves the app via local download (CSV/JSON).
+// Files saved to or loaded from Google Drive are NOT encrypted — encryption only
+// applies to files that exit the app onto local storage (Downloads folder, USB,
+// email attachments, etc.), per the agreed security boundary.
+// A lost PIN means the file is permanently unreadable — there is no recovery path,
+// this is the intended trade-off of real encryption.
+const ENC_MAGIC="HDENC1"; // file format marker so the app can tell encrypted files apart from plain ones
+async function deriveKey(pin,salt){
+  if(!window.crypto||!window.crypto.subtle){throw new Error("Encryption isn't available in this browser/context. Try a modern browser over HTTPS.");}
+  const enc=new TextEncoder();
+  const keyMaterial=await crypto.subtle.importKey("raw",enc.encode(pin),{name:"PBKDF2"},false,["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    {name:"PBKDF2",salt,iterations:150000,hash:"SHA-256"},
+    keyMaterial,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]
+  );
+}
+async function encryptText(plainText,pin){
+  const enc=new TextEncoder();
+  const salt=crypto.getRandomValues(new Uint8Array(16));
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const key=await deriveKey(pin,salt);
+  const cipherBuf=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,enc.encode(plainText));
+  // Pack as: MAGIC . base64(salt) . base64(iv) . base64(ciphertext)
+  const toB64=(buf)=>btoa(String.fromCharCode(...new Uint8Array(buf)));
+  return [ENC_MAGIC,toB64(salt),toB64(iv),toB64(cipherBuf)].join(".");
+}
+async function decryptText(packed,pin){
+  const parts=packed.split(".");
+  if(parts.length!==4||parts[0]!==ENC_MAGIC)throw new Error("Not a recognized encrypted Happy Dino file.");
+  const fromB64=(s)=>{const bin=atob(s);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);return arr;};
+  const salt=fromB64(parts[1]),iv=fromB64(parts[2]),cipher=fromB64(parts[3]);
+  const key=await deriveKey(pin,salt);
+  const plainBuf=await crypto.subtle.decrypt({name:"AES-GCM",iv},key,cipher);
+  return new TextDecoder().decode(plainBuf);
+}
+
 // ── STYLE HELPERS ──
 const inp={width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:8,background:"var(--bg)",color:"var(--text)",fontSize:14,boxSizing:"border-box",outline:"none"};
 const btn=(v="primary")=>({padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:600,fontSize:13,
   background:v==="primary"?"var(--accent)":v==="danger"?"#ef4444":v==="blue"?"#2563eb":"var(--surface2)",
   color:v==="ghost"?"var(--text)":"#fff"});
 
-const ROLE_COLORS={admin:{bg:"#ede9fe",text:"#7c3aed",label:"ADMIN"},finance:{bg:"#dbeafe",text:"#2563eb",label:"FINANCE"},user:{bg:"#dcfce7",text:"#16a34a",label:"USER"}};
+const ROLE_COLORS={admin:{bg:"#ede9fe",text:"#7c3aed",label:"ADMIN"},finance:{bg:"#dbeafe",text:"#2563eb",label:"FINANCE"},user:{bg:"#dcfce7",text:"#16a34a",label:"USER"},viewer:{bg:"#f1f5f9",text:"#475569",label:"VIEWER"}};
+// Shared helper: true for every role except viewer. Used to hide/disable every
+// add/edit/delete/status-change control across the app for the read-only role.
+const canEdit=(actor)=>actor?.role!=="viewer";
 
 function RoleBadge({role}){
   const r=ROLE_COLORS[role]||ROLE_COLORS.user;
@@ -502,8 +542,9 @@ function Schools({db,refresh,actor,onHome}){
   const save=()=>{const list=editing?schools.map(s=>s.id===editing?form:s):[...schools,form];setDB({schools:list});logAction(actor.role,actor.name,editing?"EDIT_SCHOOL":"ADD_SCHOOL",form.name);refresh();setShowModal(false);};
   const del=(id)=>{const s=schools.find(x=>x.id===id);if(window.confirm("Delete school?")){setDB({schools:schools.filter(s=>s.id!==id)});logAction(actor.role,actor.name,"DELETE_SCHOOL",s?.name);refresh();}};
   if(view==="students"&&selSchool)return <Students db={db} refresh={refresh} school={selSchool} onBack={()=>setView("list")} actor={actor}/>;
+  const editable=canEdit(actor);
   return <div>
-    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Schools"]} onHome={onHome} title="Schools" action={<button onClick={openAdd} style={btn("primary")}>+ Add School</button>}/>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Schools"]} onHome={onHome} title="Schools" action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Add School</button>}/>
     {schools.length===0?<EmptyState icon="🏫" text="No schools yet."/>:
     <div style={{display:"grid",gap:10}}>
       {schools.map(s=>{
@@ -521,8 +562,8 @@ function Schools({db,refresh,actor,onHome}){
               <Badge label={`${sessionCount} sessions`} color="purple"/>
               <Badge label={`${studentCount} students`} color="blue"/>
               <button onClick={()=>{setSelSchool(s);setView("students");}} style={btn("ghost")}>Students</button>
-              <button onClick={()=>openEdit(s)} style={btn("ghost")}>Edit</button>
-              <button onClick={()=>del(s.id)} style={btn("danger")}>Del</button>
+              {editable&&<button onClick={()=>openEdit(s)} style={btn("ghost")}>Edit</button>}
+              {editable&&<button onClick={()=>del(s.id)} style={btn("danger")}>Del</button>}
             </div>
           </div>
         </div>;
@@ -555,8 +596,9 @@ function Students({db,refresh,school,onBack,actor,onHome}){
   const openEdit=(s)=>{setForm({...s});setEditing(s.id);setShowModal(true);};
   const save=()=>{const list=editing?allStudents.map(s=>s.id===editing?form:s):[...allStudents,form];setDB({students:list});logAction(actor.role,actor.name,editing?"EDIT_STUDENT":"ADD_STUDENT",form.name);refresh();setShowModal(false);};
   const del=(id)=>{const s=allStudents.find(x=>x.id===id);if(window.confirm("Delete student?")){setDB({students:allStudents.filter(s=>s.id!==id)});logAction(actor.role,actor.name,"DELETE_STUDENT",s?.name);refresh();}};
+  const editable=canEdit(actor);
   return <div>
-    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},school?"Schools":"Students",school?school.name:null].filter(Boolean)} onBack={onBack} onHome={onHome} title={school?`Students — ${school.name}`:"All Students"} action={<button onClick={openAdd} style={btn("primary")}>+ Add Student</button>}/>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},school?"Schools":"Students",school?school.name:null].filter(Boolean)} onBack={onBack} onHome={onHome} title={school?`Students — ${school.name}`:"All Students"} action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Add Student</button>}/>
     {students.length===0?<EmptyState icon="🎒" text="No students yet."/>:
     <div style={{display:"grid",gap:10}}>
       {students.map(s=>{
@@ -575,8 +617,8 @@ function Students({db,refresh,school,onBack,actor,onHome}){
             <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"flex-start"}}>
               <Badge label={`${attended} attended`} color="green"/>
               <Badge label={`${upcoming} upcoming`} color="blue"/>
-              <button onClick={()=>openEdit(s)} style={btn("ghost")}>Edit</button>
-              <button onClick={()=>del(s.id)} style={btn("danger")}>Del</button>
+              {editable&&<button onClick={()=>openEdit(s)} style={btn("ghost")}>Edit</button>}
+              {editable&&<button onClick={()=>del(s.id)} style={btn("danger")}>Del</button>}
             </div>
           </div>
         </div>;
@@ -629,8 +671,9 @@ function CampTypes({db,refresh,actor,onHome}){
   const openEdit=(c)=>{setForm({...c,extraCosts:c.extraCosts||[]});setEditing(c.id);setShowModal(true);};
   const save=()=>{const list=editing?campTypes.map(c=>c.id===editing?form:c):[...campTypes,form];setDB({campTypes:list});logAction(actor.role,actor.name,editing?"EDIT_CAMPTYPE":"ADD_CAMPTYPE",form.name);refresh();setShowModal(false);};
   const del=(id)=>{const c=campTypes.find(x=>x.id===id);if(window.confirm("Delete?")){setDB({campTypes:campTypes.filter(c=>c.id!==id)});logAction(actor.role,actor.name,"DELETE_CAMPTYPE",c?.name);refresh();}};
+  const editable=canEdit(actor);
   return <div>
-    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Camp Types"]} onHome={onHome} title="Camp Types" action={<button onClick={openAdd} style={btn("primary")}>+ New Camp Type</button>}/>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Camp Types"]} onHome={onHome} title="Camp Types" action={editable&&<button onClick={openAdd} style={btn("primary")}>+ New Camp Type</button>}/>
     {campTypes.length===0?<EmptyState icon="🦖" text="No camp types yet."/>:
     <div style={{display:"grid",gap:10}}>
       {campTypes.map(c=>{
@@ -645,8 +688,8 @@ function CampTypes({db,refresh,actor,onHome}){
             </div>
             <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
               <Badge label={`${sessions} sessions`} color="purple"/>
-              <button onClick={()=>openEdit(c)} style={btn("ghost")}>Edit</button>
-              <button onClick={()=>del(c.id)} style={btn("danger")}>Del</button>
+              {editable&&<button onClick={()=>openEdit(c)} style={btn("ghost")}>Edit</button>}
+              {editable&&<button onClick={()=>del(c.id)} style={btn("danger")}>Del</button>}
             </div>
           </div>
         </div>;
@@ -698,8 +741,9 @@ function Sessions({db,refresh,initialFilter,actor,onHome}){
   const del=(id)=>{if(window.confirm("Delete session?")){setDB({sessions:sessions.filter(s=>s.id!==id)});logAction(actor.role,actor.name,"DELETE_SESSION",id);refresh();}};
   const filtered=filter==="all"?sessions:sessions.filter(s=>s.status===filter);
   if(selected)return <SessionDetail session={selected} db={db} refresh={refresh} onBack={()=>setSelected(null)} actor={actor}/>;
+  const editable=canEdit(actor);
   return <div>
-    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Sessions",filter!=="all"?filter:null].filter(Boolean)} onHome={onHome} title="Camp Sessions" action={<button onClick={openAdd} style={btn("primary")}>+ New Session</button>}/>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Sessions",filter!=="all"?filter:null].filter(Boolean)} onHome={onHome} title="Camp Sessions" action={editable&&<button onClick={openAdd} style={btn("primary")}>+ New Session</button>}/>
     <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
       {["all","scheduled","completed","cancelled"].map(f=><button key={f} onClick={()=>setFilter(f)} style={{padding:"5px 12px",borderRadius:8,border:"1px solid var(--border)",cursor:"pointer",fontWeight:600,fontSize:12,background:filter===f?"var(--accent)":"var(--surface)",color:filter===f?"#fff":"var(--text)",textTransform:"capitalize"}}>{f}</button>)}
     </div>
@@ -721,8 +765,8 @@ function Sessions({db,refresh,initialFilter,actor,onHome}){
               <Badge label={s.status} color={sc[s.status]||"gray"}/>
               <Badge label={`${regCount} students`} color="blue"/>
               <Badge label={`${crewCount} crew`} color="purple"/>
-              <button onClick={e=>{e.stopPropagation();openEdit(s);}} style={btn("ghost")}>Edit</button>
-              <button onClick={e=>{e.stopPropagation();del(s.id);}} style={btn("danger")}>Del</button>
+              {editable&&<button onClick={e=>{e.stopPropagation();openEdit(s);}} style={btn("ghost")}>Edit</button>}
+              {editable&&<button onClick={e=>{e.stopPropagation();del(s.id);}} style={btn("danger")}>Del</button>}
             </div>
           </div>
         </div>;
@@ -763,7 +807,7 @@ function SessionDetail({session,db,refresh,onBack,actor}){
     </div>
     {tab==="registrations"&&<SessionRegistrations session={s} db={db} refresh={refresh} actor={actor}/>}
     {tab==="crew"&&<SessionCrew session={s} db={db} refresh={refresh} actor={actor}/>}
-    {tab==="attendance"&&<SessionAttendance session={s} db={db} refresh={refresh}/>}
+    {tab==="attendance"&&<SessionAttendance session={s} db={db} refresh={refresh} actor={actor}/>}
     {tab==="expenses"&&<SessionExpenses session={s} db={db} refresh={refresh} actor={actor}/>}
   </div>;
 }
@@ -803,10 +847,11 @@ function SessionRegistrations({session,db,refresh,actor}){
   };
   const available=schoolStudents.filter(s=>!regs.map(r=>r.studentId).includes(s.id));
   const totalFees=regs.reduce((a,r)=>a+parseFloat(r.fee||0),0);
+  const editable=canEdit(actor);
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
       <div style={{fontSize:13,color:"var(--muted)"}}>{regs.length} registered · Total: <b style={{color:"var(--text)"}}>{fmt(totalFees)}</b></div>
-      <button onClick={()=>setShowModal(true)} style={btn("primary")}>+ Register Student</button>
+      {editable&&<button onClick={()=>setShowModal(true)} style={btn("primary")}>+ Register Student</button>}
     </div>
     {regs.length===0?<EmptyState icon="📋" text="No registrations yet."/>:
     <div style={{display:"grid",gap:8}}>
@@ -823,16 +868,16 @@ function SessionRegistrations({session,db,refresh,actor}){
             <span style={{fontSize:13,fontWeight:700}}>{fmt(reg.fee)}</span>
             <Badge label={pay?.status||"—"} color={pay?.status==="paid"?"green":pay?.status==="refunded"?"red":"amber"}/>
             <Badge label={reg.consentSigned?"Consent ✓":"No consent"} color={reg.consentSigned?"green":"red"}/>
-            {pay?.status==="unpaid"&&<button onClick={()=>updatePay(pay.id,"paid")} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Mark Paid</button>}
-            {pay?.status==="paid"&&<button onClick={()=>updatePay(pay.id,"refunded")} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Refund</button>}
-            <button onClick={()=>toggleConsent(reg.id)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Consent</button>
+            {editable&&pay?.status==="unpaid"&&<button onClick={()=>updatePay(pay.id,"paid")} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Mark Paid</button>}
+            {editable&&pay?.status==="paid"&&<button onClick={()=>updatePay(pay.id,"refunded")} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Refund</button>}
+            {editable&&<button onClick={()=>toggleConsent(reg.id)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Consent</button>}
             <button onClick={()=>printInvoice(reg)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>🖨 Invoice</button>
-            <button onClick={()=>removeReg(reg.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>✕</button>
+            {editable&&<button onClick={()=>removeReg(reg.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>✕</button>}
           </div>
         </div>;
       })}
     </div>}
-    {showModal&&<Modal title="Register Student" onClose={()=>setShowModal(false)}>
+    {showModal&&editable&&<Modal title="Register Student" onClose={()=>setShowModal(false)}>
       <Field label="Student"><select style={inp} value={form.studentId} onChange={e=>setForm({...form,studentId:e.target.value})}>
         <option value="">Select student</option>{available.map(s=><option key={s.id} value={s.id}>{s.name} — {s.className}</option>)}</select></Field>
       {form.studentId&&ct&&<div style={{background:"var(--surface2)",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:13}}>
@@ -861,10 +906,11 @@ function SessionCrew({session,db,refresh,actor}){
   };
   const togglePaid=(id)=>{setDB({crewAssignments:(db.crewAssignments||[]).map(a=>a.id===id?{...a,paid:!a.paid}:a)});refresh();};
   const remove=(id)=>{setDB({crewAssignments:(db.crewAssignments||[]).filter(a=>a.id!==id)});refresh();};
+  const editable=canEdit(actor);
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
       <div style={{fontSize:13,color:"var(--muted)"}}>{assignments.length} crew assigned</div>
-      <button onClick={()=>setShowModal(true)} style={btn("primary")}>+ Assign Crew</button>
+      {editable&&<button onClick={()=>setShowModal(true)} style={btn("primary")}>+ Assign Crew</button>}
     </div>
     {assignments.length===0?<EmptyState icon="👥" text="No crew assigned yet."/>:
     <div style={{display:"grid",gap:8}}>
@@ -875,13 +921,13 @@ function SessionCrew({session,db,refresh,actor}){
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <span style={{fontWeight:700,fontSize:13}}>{fmt(a.fee)}</span>
             <Badge label={a.paid?"Paid":"Unpaid"} color={a.paid?"green":"amber"}/>
-            <button onClick={()=>togglePaid(a.id)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>{a.paid?"Unmark":"Mark Paid"}</button>
-            <button onClick={()=>remove(a.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>Remove</button>
+            {editable&&<button onClick={()=>togglePaid(a.id)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>{a.paid?"Unmark":"Mark Paid"}</button>}
+            {editable&&<button onClick={()=>remove(a.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>Remove</button>}
           </div>
         </div>;
       })}
     </div>}
-    {showModal&&<Modal title="Assign Crew" onClose={()=>setShowModal(false)}>
+    {showModal&&editable&&<Modal title="Assign Crew" onClose={()=>setShowModal(false)}>
       <Field label="Crew Member"><select style={inp} value={form.crewId} onChange={e=>setForm({...form,crewId:e.target.value})}>
         <option value="">Select crew</option>{available.map(c=><option key={c.id} value={c.id}>{c.name} (⭐{c.rating||"—"})</option>)}</select></Field>
       <Field label="Role"><select style={inp} value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>
@@ -896,10 +942,11 @@ function SessionCrew({session,db,refresh,actor}){
   </div>;
 }
 
-function SessionAttendance({session,db,refresh}){
+function SessionAttendance({session,db,refresh,actor}){
   const regs=(db.registrations||[]).filter(r=>r.sessionId===session.id);
   const toggle=(regId,field)=>{setDB({registrations:(db.registrations||[]).map(r=>r.id===regId?{...r,[field]:!r[field]}:r)});refresh();};
   const present=regs.filter(r=>r.present).length;
+  const editable=canEdit(actor);
   return <div>
     <div style={{fontSize:13,color:"var(--muted)",marginBottom:12}}>{present}/{regs.length} present</div>
     {regs.length===0?<EmptyState icon="✅" text="No registrations."/>:
@@ -909,8 +956,8 @@ function SessionAttendance({session,db,refresh}){
         return <div key={reg.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
           <div><div style={{fontWeight:600,fontSize:13}}>{student?.name||"—"}</div><div style={{fontSize:12,color:"var(--muted)"}}>{student?.className}</div></div>
           <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>toggle(reg.id,"present")} style={{...btn(reg.present?"primary":"ghost"),padding:"5px 12px",fontSize:12}}>{reg.present?"✓ Present":"Absent"}</button>
-            <button onClick={()=>toggle(reg.id,"consentSigned")} style={{...btn(reg.consentSigned?"primary":"ghost"),padding:"5px 12px",fontSize:12}}>{reg.consentSigned?"✓ Consent":"Consent"}</button>
+            <button onClick={()=>editable&&toggle(reg.id,"present")} disabled={!editable} style={{...btn(reg.present?"primary":"ghost"),padding:"5px 12px",fontSize:12,opacity:editable?1:0.6,cursor:editable?"pointer":"default"}}>{reg.present?"✓ Present":"Absent"}</button>
+            <button onClick={()=>editable&&toggle(reg.id,"consentSigned")} disabled={!editable} style={{...btn(reg.consentSigned?"primary":"ghost"),padding:"5px 12px",fontSize:12,opacity:editable?1:0.6,cursor:editable?"pointer":"default"}}>{reg.consentSigned?"✓ Consent":"Consent"}</button>
           </div>
         </div>;
       })}
@@ -925,19 +972,20 @@ function SessionExpenses({session,db,refresh,actor}){
   const save=()=>{let amount=parseFloat(form.amount||0);if(form.category==="mileage")amount=parseFloat(form.km||0)*parseFloat(form.ratePerKm||0.5);setDB({expenses:[...(db.expenses||[]),{...form,amount}]});logAction(actor.role,actor.name,"ADD_EXPENSE",form.label);refresh();setShowModal(false);};
   const del=(id)=>{setDB({expenses:(db.expenses||[]).filter(e=>e.id!==id)});refresh();};
   const total=expenses.reduce((a,e)=>a+parseFloat(e.amount||0),0);
+  const editable=canEdit(actor);
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
       <div style={{fontSize:13,color:"var(--muted)"}}>Total: <b style={{color:"var(--text)"}}>{fmt(total)}</b></div>
-      <button onClick={openAdd} style={btn("primary")}>+ Add Expense</button>
+      {editable&&<button onClick={openAdd} style={btn("primary")}>+ Add Expense</button>}
     </div>
     {expenses.length===0?<EmptyState icon="💰" text="No expenses yet."/>:
     <div style={{display:"grid",gap:8}}>
       {expenses.map(e=><div key={e.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
         <div><div style={{fontWeight:600,fontSize:13}}>{e.label}</div><div style={{fontSize:12,color:"var(--muted)"}}>{e.category}{e.category==="mileage"?` · ${e.km}km @ RM${e.ratePerKm}/km`:""}</div></div>
-        <div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{fontWeight:700}}>{fmt(e.amount)}</span><button onClick={()=>del(e.id)} style={{...btn("danger"),padding:"3px 8px",fontSize:11}}>Del</button></div>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{fontWeight:700}}>{fmt(e.amount)}</span>{editable&&<button onClick={()=>del(e.id)} style={{...btn("danger"),padding:"3px 8px",fontSize:11}}>Del</button>}</div>
       </div>)}
     </div>}
-    {showModal&&<Modal title="Add Expense" onClose={()=>setShowModal(false)}>
+    {showModal&&editable&&<Modal title="Add Expense" onClose={()=>setShowModal(false)}>
       <Field label="Category"><select style={inp} value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>
         {["materials","meals","mileage","claims","crew","others"].map(c=><option key={c}>{c}</option>)}</select></Field>
       <Field label="Label"><input style={inp} value={form.label} onChange={e=>setForm({...form,label:e.target.value})}/></Field>
@@ -963,8 +1011,9 @@ function Crew({db,refresh,actor,onHome}){
   const openEdit=(c)=>{setForm({...c});setEditing(c.id);setShowModal(true);};
   const save=()=>{const list=editing?crew.map(c=>c.id===editing?form:c):[...crew,form];setDB({crew:list});logAction(actor.role,actor.name,editing?"EDIT_CREW":"ADD_CREW",form.name);refresh();setShowModal(false);};
   const del=(id)=>{const c=crew.find(x=>x.id===id);if(window.confirm("Delete?")){setDB({crew:crew.filter(c=>c.id!==id)});logAction(actor.role,actor.name,"DELETE_CREW",c?.name);refresh();}};
+  const editable=canEdit(actor);
   return <div>
-    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Crew"]} onHome={onHome} title="Crew" action={<button onClick={openAdd} style={btn("primary")}>+ Add Crew</button>}/>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Crew"]} onHome={onHome} title="Crew" action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Add Crew</button>}/>
     {crew.length===0?<EmptyState icon="🧑‍🏫" text="No crew yet."/>:
     <div style={{display:"grid",gap:10}}>
       {crew.map(c=>{
@@ -982,14 +1031,14 @@ function Crew({db,refresh,actor,onHome}){
               <Badge label={`${asgn.length} sessions`} color="purple"/>
               <Badge label={`${unpaid} unpaid`} color={unpaid>0?"amber":"green"}/>
               <Badge label={fmt(earned)} color="blue"/>
-              <button onClick={()=>openEdit(c)} style={btn("ghost")}>Edit</button>
-              <button onClick={()=>del(c.id)} style={btn("danger")}>Del</button>
+              {editable&&<button onClick={()=>openEdit(c)} style={btn("ghost")}>Edit</button>}
+              {editable&&<button onClick={()=>del(c.id)} style={btn("danger")}>Del</button>}
             </div>
           </div>
         </div>;
       })}
     </div>}
-    {showModal&&<Modal title={editing?"Edit Crew":"Add Crew"} onClose={()=>setShowModal(false)} wide>
+    {showModal&&editable&&<Modal title={editing?"Edit Crew":"Add Crew"} onClose={()=>setShowModal(false)} wide>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
         <Field label="Full Name"><input style={inp} value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
         <Field label="NRIC"><input style={inp} value={form.nric||""} onChange={e=>setForm({...form,nric:e.target.value})}/></Field>
@@ -1020,8 +1069,9 @@ function Inventory({db,refresh,actor,onHome}){
   const del=(id)=>{const i=inventory.find(x=>x.id===id);if(window.confirm("Delete?")){setDB({inventory:inventory.filter(i=>i.id!==id)});logAction(actor.role,actor.name,"DELETE_ITEM",i?.name);refresh();}};
   const adjust=(id,d)=>{setDB({inventory:inventory.map(i=>i.id===id?{...i,qty:Math.max(0,(parseInt(i.qty)||0)+d)}:i)});refresh();};
   const totalVal=inventory.reduce((a,i)=>a+parseFloat(i.unitCost||0)*parseInt(i.qty||0),0);
+  const editable=canEdit(actor);
   return <div>
-    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Inventory"]} onHome={onHome} title="Inventory" action={<button onClick={openAdd} style={btn("primary")}>+ Add Item</button>}/>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Inventory"]} onHome={onHome} title="Inventory" action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Add Item</button>}/>
     <div style={{fontSize:12,color:"var(--muted)",marginTop:-12,marginBottom:14}}>Total value: {fmt(totalVal)}</div>
     {inventory.length===0?<EmptyState icon="📦" text="No inventory items yet."/>:
     <div style={{display:"grid",gap:10}}>
@@ -1034,18 +1084,18 @@ function Inventory({db,refresh,actor,onHome}){
               <div style={{fontSize:12,color:"var(--muted)"}}>{item.category} · SKU: {item.sku||"—"} · {fmt(item.unitCost)}/{item.unit} · Value: {fmt(parseFloat(item.unitCost||0)*parseInt(item.qty||0))}</div>
             </div>
             <div style={{display:"flex",gap:6,alignItems:"center"}}>
-              <button onClick={()=>adjust(item.id,-1)} style={{...btn("ghost"),padding:"4px 10px",fontSize:16}}>−</button>
+              {editable&&<button onClick={()=>adjust(item.id,-1)} style={{...btn("ghost"),padding:"4px 10px",fontSize:16}}>−</button>}
               <span style={{fontWeight:800,fontSize:16,minWidth:28,textAlign:"center"}}>{item.qty}</span>
-              <button onClick={()=>adjust(item.id,1)} style={{...btn("ghost"),padding:"4px 10px",fontSize:16}}>+</button>
+              {editable&&<button onClick={()=>adjust(item.id,1)} style={{...btn("ghost"),padding:"4px 10px",fontSize:16}}>+</button>}
               <span style={{color:"var(--muted)",fontSize:12}}>{item.unit}</span>
-              <button onClick={()=>openEdit(item)} style={btn("ghost")}>Edit</button>
-              <button onClick={()=>del(item.id)} style={btn("danger")}>Del</button>
+              {editable&&<button onClick={()=>openEdit(item)} style={btn("ghost")}>Edit</button>}
+              {editable&&<button onClick={()=>del(item.id)} style={btn("danger")}>Del</button>}
             </div>
           </div>
         </div>;
       })}
     </div>}
-    {showModal&&<Modal title={editing?"Edit Item":"Add Item"} onClose={()=>setShowModal(false)}>
+    {showModal&&editable&&<Modal title={editing?"Edit Item":"Add Item"} onClose={()=>setShowModal(false)}>
       <Field label="Item Name"><input style={inp} value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
         <Field label="Category"><select style={inp} value={form.category||"materials"} onChange={e=>setForm({...form,category:e.target.value})}>
@@ -1072,7 +1122,8 @@ function Payments({db,refresh,initialFilter,role,actor,onHome}){
   useEffect(()=>{if(initialFilter)setFilter(initialFilter);},[initialFilter]);
   const filtered=filter==="all"?payments:payments.filter(p=>p.status===filter);
   const tot=(s)=>payments.filter(p=>p.status===s).reduce((a,p)=>a+parseFloat(p.amount||0),0);
-  const hideTotals=role==="user";
+  const hideTotals=role==="user"||role==="viewer";
+  const editable=canEdit(actor);
   const updateStatus=(id,status)=>{setDB({payments:payments.map(p=>p.id===id?{...p,status,paidAt:status==="paid"?new Date().toISOString():p.paidAt}:p)});logAction(actor.role,actor.name,"UPDATE_PAYMENT",`${id} -> ${status}`);refresh();};
   const printInvoice=(p)=>{
     const student=(db.students||[]).find(s=>s.id===p.studentId);
@@ -1089,7 +1140,7 @@ function Payments({db,refresh,initialFilter,role,actor,onHome}){
       <StatCard label="Refunded" value={fmt(tot("refunded"))} color="#ef4444"/>
     </div>}
     {hideTotals&&<div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:12,color:"var(--muted)"}}>
-      💡 Revenue totals are restricted for your role. You can still view and update individual payment statuses below.
+      💡 Revenue totals are restricted for your role. {editable?"You can still view and update individual payment statuses below.":"You can view individual payment statuses below."}
     </div>}
     <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
       {["all","paid","unpaid","refunded"].map(f=><button key={f} onClick={()=>setFilter(f)} style={{padding:"5px 12px",borderRadius:8,border:"1px solid var(--border)",cursor:"pointer",fontWeight:600,fontSize:12,background:filter===f?"var(--accent)":"var(--surface)",color:filter===f?"#fff":"var(--text)",textTransform:"capitalize"}}>{f}</button>)}
@@ -1110,8 +1161,8 @@ function Payments({db,refresh,initialFilter,role,actor,onHome}){
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <span style={{fontWeight:700}}>{fmt(p.amount)}</span>
             <Badge label={p.status} color={p.status==="paid"?"green":p.status==="refunded"?"red":"amber"}/>
-            {p.status==="unpaid"&&<button onClick={()=>updateStatus(p.id,"paid")} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Mark Paid</button>}
-            {p.status==="paid"&&<button onClick={()=>updateStatus(p.id,"refunded")} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Refund</button>}
+            {editable&&p.status==="unpaid"&&<button onClick={()=>updateStatus(p.id,"paid")} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Mark Paid</button>}
+            {editable&&p.status==="paid"&&<button onClick={()=>updateStatus(p.id,"refunded")} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Refund</button>}
             <button onClick={()=>printInvoice(p)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>🖨 Invoice</button>
           </div>
         </div>;
@@ -1167,7 +1218,7 @@ function Reports({db,onHome}){
 }
 
 // ── COMMUNICATIONS ──
-function Communications({db,refresh,onHome}){
+function Communications({db,refresh,onHome,actor}){
   const [form,setForm]=useState({sessionId:"",message:""});
   const comms=db.communications||[];const sessions=db.sessions||[];
   const getParents=(sid)=>{const regs=(db.registrations||[]).filter(r=>r.sessionId===sid);return regs.map(r=>{const s=(db.students||[]).find(st=>st.id===r.studentId);return s?{name:s.parentName,phone:s.parentPhone}:null;}).filter(Boolean);};
@@ -1181,7 +1232,7 @@ function Communications({db,refresh,onHome}){
   };
   return <div>
     <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Communications"]} onHome={onHome} title="Communications"/>
-    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18,marginBottom:18}}>
+    {canEdit(actor)?<div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18,marginBottom:18}}>
       <div style={{fontWeight:700,fontSize:13,marginBottom:12}}>Send Broadcast Message</div>
       <Field label="Session"><select style={inp} value={form.sessionId} onChange={e=>setForm({...form,sessionId:e.target.value})}>
         <option value="">Select session</option>
@@ -1191,6 +1242,9 @@ function Communications({db,refresh,onHome}){
       <Field label="Message"><textarea style={{...inp,minHeight:80}} value={form.message} onChange={e=>setForm({...form,message:e.target.value})} placeholder="Type your message..."/></Field>
       <button onClick={send} style={btn("primary")}>📲 Send via WhatsApp</button>
     </div>
+    :<div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:12,color:"var(--muted)"}}>
+      💡 Sending broadcasts is restricted for your role. You can view the message log below.
+    </div>}
     <SectionHeader label="Message Log"/>
     {comms.length===0?<EmptyState icon="💬" text="No messages sent yet."/>:
     <div style={{display:"grid",gap:8}}>
@@ -1230,7 +1284,12 @@ function BackupRestore({db,refresh,actor,onHome}){
   const [showDriveFiles,setShowDriveFiles]=useState(false);
   const [driveFiles,setDriveFiles]=useState([]);
   const [driveFilesLoading,setDriveFilesLoading]=useState(false);
+  const [previewData,setPreviewData]=useState(null); // {name, counts} for viewer read-only preview
+  const [pinPrompt,setPinPrompt]=useState(null); // {purpose:'download'|'decrypt', resolve}
+  const [decryptFile,setDecryptFile]=useState(null);
   const drive=useGoogleDrive();
+  const editable=canEdit(actor);
+  const exportPin=db.settings?.exportPin||"";
   const esc=(v)=>{if(v==null)return"";const s=String(v);if(s.includes(",")||s.includes('"')||s.includes("\n"))return`"${s.replace(/"/g,'""')}"`;return s;};
   const row=(...cells)=>cells.map(esc).join(",")+"\n";
 
@@ -1328,29 +1387,67 @@ function BackupRestore({db,refresh,actor,onHome}){
 
   const markBackedUp=()=>{const now=new Date().toISOString();localStorage.setItem("happyDino_lastBackup",now);setLastBackup(now);};
 
-  // ---- SAVE: LOCAL ----
-  const saveLocalCSV=()=>{
+  // Prompts for the export PIN if one is configured, otherwise resolves immediately
+  // with an empty string (encryption skipped). Used before every local download.
+  const askExportPin=()=>{
+    return new Promise((resolve)=>{
+      if(!exportPin){resolve("");return;}
+      setPinPrompt({purpose:"download",resolve});
+    });
+  };
+
+  const downloadFile=(filename,content)=>{
+    const a=document.createElement("a");a.href="data:text/plain;charset=utf-8,"+encodeURIComponent(content);a.download=filename;a.click();
+  };
+
+  // ---- SAVE: LOCAL (always encrypted if an Export PIN is set in Settings) ----
+  const saveLocalCSV=async()=>{
+    const pin=await askExportPin();
+    if(pin===null)return; // cancelled
     const csv=buildCombinedCSV();
     const ts=new Date().toISOString().slice(0,10);
-    const a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);a.download=`happy-dino-export-${ts}.csv`;a.click();
+    try{
+      if(pin){
+        const enc=await encryptText(csv,pin);
+        downloadFile(`happy-dino-export-${ts}.csv.hdenc`,enc);
+      } else {
+        downloadFile(`happy-dino-export-${ts}.csv`,csv);
+      }
+    }catch(e){alert("Could not prepare the download: "+e.message);return;}
     markBackedUp();
-    logAction(actor.role,actor.name,"EXPORT_CSV","Combined CSV downloaded locally");
+    logAction(actor.role,actor.name,"EXPORT_CSV",`Combined CSV downloaded locally${pin?" (encrypted)":""}`);
   };
-  const saveLocalJSON=()=>{
+  const saveLocalJSON=async()=>{
+    const pin=await askExportPin();
+    if(pin===null)return;
     const data=JSON.stringify(getDB(),null,2);
     const ts=new Date().toISOString().slice(0,10);
-    const a=document.createElement("a");a.href="data:application/json;charset=utf-8,"+encodeURIComponent(data);a.download=`happy-dino-backup-${ts}.json`;a.click();
+    try{
+      if(pin){
+        const enc=await encryptText(data,pin);
+        downloadFile(`happy-dino-backup-${ts}.json.hdenc`,enc);
+      } else {
+        downloadFile(`happy-dino-backup-${ts}.json`,data);
+      }
+    }catch(e){alert("Could not prepare the download: "+e.message);return;}
     markBackedUp();
-    logAction(actor.role,actor.name,"EXPORT_JSON","Full JSON backup downloaded locally");
+    logAction(actor.role,actor.name,"EXPORT_JSON",`Full JSON backup downloaded locally${pin?" (encrypted)":""}`);
   };
 
   // ---- LOAD: LOCAL ----
   const loadLocalJSON=(e)=>{
     const file=e.target.files[0];if(!file)return;
     const reader=new FileReader();
-    reader.onload=(ev)=>{
+    reader.onload=async(ev)=>{
+      let text=ev.target.result;
+      if(file.name.endsWith(".hdenc")){
+        const pin=await new Promise((resolve)=>setPinPrompt({purpose:"decrypt",resolve}));
+        if(pin===null){e.target.value="";return;}
+        try{ text=await decryptText(text,pin); }
+        catch{ alert("Could not decrypt — wrong PIN or this isn't a valid encrypted Happy Dino file."); e.target.value=""; return; }
+      }
       try{
-        saveDB(JSON.parse(ev.target.result));
+        saveDB(JSON.parse(text));
         refresh();
         logAction(actor.role,actor.name,"IMPORT_DATA","Restored from local JSON backup");
         alert("Data restored successfully from local file!");
@@ -1360,7 +1457,27 @@ function BackupRestore({db,refresh,actor,onHome}){
     reader.readAsText(file);
   };
 
-  // ---- SAVE: GOOGLE DRIVE ----
+  // ---- DECRYPT TOOL (standalone — turns a .hdenc file back into a normal downloadable file) ----
+  const handleDecryptFileChosen=(e)=>{
+    const file=e.target.files[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=(ev)=>{ setDecryptFile({name:file.name,content:ev.target.result}); };
+    reader.readAsText(file);
+    e.target.value="";
+  };
+  const runDecryptAndDownload=async()=>{
+    if(!decryptFile)return;
+    const pin=await new Promise((resolve)=>setPinPrompt({purpose:"decrypt",resolve}));
+    if(pin===null)return;
+    try{
+      const plain=await decryptText(decryptFile.content,pin);
+      const outName=decryptFile.name.replace(/\.hdenc$/,"");
+      downloadFile(outName,plain);
+      setDecryptFile(null);
+    }catch{ alert("Could not decrypt — wrong PIN or this isn't a valid encrypted Happy Dino file."); }
+  };
+
+  // ---- SAVE: GOOGLE DRIVE (write actions — blocked for Viewer) ----
   const switchGoogleAccount=async()=>{
     setDriveBusy(true);setDriveStatus("Opening Google account picker...");
     const res=await drive.switchAccount();
@@ -1388,6 +1505,7 @@ function BackupRestore({db,refresh,actor,onHome}){
   };
 
   // ---- LOAD: GOOGLE DRIVE ----
+  // Everyone (including Viewer) can browse and list backups — this is read-only.
   const browseDriveFiles=async()=>{
     setShowDriveFiles(true);setDriveFilesLoading(true);setDriveStatus("");
     const res=await drive.listDriveFiles();
@@ -1395,6 +1513,7 @@ function BackupRestore({db,refresh,actor,onHome}){
     else{setDriveStatus("⚠ "+(res.reason||"Could not list Drive files."));setShowDriveFiles(false);}
     setDriveFilesLoading(false);
   };
+  // Admin/Finance/User: actually restores (overwrites current data).
   const restoreFromDriveFile=async(file)=>{
     if(!window.confirm(`Restore from "${file.name}"? This will overwrite all current data.`))return;
     setDriveBusy(true);setDriveStatus(`Downloading "${file.name}"...`);
@@ -1410,6 +1529,21 @@ function BackupRestore({db,refresh,actor,onHome}){
     }else{setDriveStatus("⚠ "+(res.reason||"Could not download that file."));}
     setDriveBusy(false);
   };
+  // Viewer: preview only — downloads the file just to compute record counts, never
+  // calls saveDB, so current app data is never touched.
+  const previewDriveFile=async(file)=>{
+    setDriveBusy(true);setDriveStatus(`Loading preview of "${file.name}"...`);
+    const res=await drive.downloadDriveFile(file.id);
+    if(res.ok){
+      try{
+        const parsed=JSON.parse(res.content);
+        const counts=Object.fromEntries(["schools","students","campTypes","sessions","registrations","crew","crewAssignments","payments","expenses","inventory","communications"].map(k=>[k,(parsed[k]||[]).length]));
+        setPreviewData({name:file.name,counts,modifiedTime:file.modifiedTime});
+        setDriveStatus("");
+      }catch{setDriveStatus("⚠ That file isn't a valid Happy Dino JSON backup.");}
+    }else{setDriveStatus("⚠ "+(res.reason||"Could not download that file."));}
+    setDriveBusy(false);
+  };
 
   const counts=Object.fromEntries(["schools","students","campTypes","sessions","registrations","crew","crewAssignments","payments","expenses","inventory","communications"].map(k=>[k,(db[k]||[]).length]));
 
@@ -1417,6 +1551,7 @@ function BackupRestore({db,refresh,actor,onHome}){
     <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Backup & Restore"]} onHome={onHome} title="Backup & Restore"/>
     {lastBackup&&<div style={{background:"#dcfce7",border:"1px solid #bbf7d0",borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:13,color:"#16a34a"}}>✓ Last backup: <b>{fmtDate(lastBackup)}</b></div>}
     {!lastBackup&&<div style={{background:"#fef3c7",border:"1px solid #fde68a",borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:13,color:"#d97706"}}>⚠ No backup recorded yet. Export your data regularly to avoid loss.</div>}
+    {!exportPin&&<div style={{background:"#fef3c7",border:"1px solid #fde68a",borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:12,color:"#d97706"}}>⚠ No Export PIN is set in Settings — local downloads are currently unencrypted. An Admin can set one in Settings → Local Download Security.</div>}
 
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8,marginBottom:24}}>
       {Object.entries({Schools:counts.schools,Students:counts.students,"Camp Types":counts.campTypes,Sessions:counts.sessions,Registrations:counts.registrations,Payments:counts.payments,Crew:counts.crew,Expenses:counts.expenses,Inventory:counts.inventory}).map(([k,v])=><div key={k} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 12px",textAlign:"center"}}>
@@ -1430,7 +1565,7 @@ function BackupRestore({db,refresh,actor,onHome}){
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:14,marginBottom:24}}>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
         <div style={{fontWeight:700,fontSize:14,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>🖥️ Save to This Device</div>
-        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Downloads a file to your computer or phone's Downloads folder.</div>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Downloads a file to your computer or phone's Downloads folder.{exportPin&&" The file will be PIN-encrypted."}</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button onClick={saveLocalCSV} style={btn("primary")}>⬇ CSV (Excel)</button>
           <button onClick={saveLocalJSON} style={btn("ghost")}>⬇ JSON (Full)</button>
@@ -1438,6 +1573,7 @@ function BackupRestore({db,refresh,actor,onHome}){
       </div>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
         <div style={{fontWeight:700,fontSize:14,marginBottom:4,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>☁️ Save to Google Drive</div>
+        {!editable?<div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Saving to Drive is restricted for your role.</div>:<>
         {drive.account?
           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10}}>
             <Badge label={`Signed in as ${drive.account}`} color="green"/>
@@ -1452,6 +1588,7 @@ function BackupRestore({db,refresh,actor,onHome}){
           <button onClick={saveToDriveCSV} disabled={driveBusy} style={{...btn("blue"),opacity:driveBusy?0.6:1}}>☁ CSV to Drive</button>
           <button onClick={saveToDriveJSON} disabled={driveBusy} style={{...btn("blue"),opacity:driveBusy?0.6:1}}>☁ JSON to Drive</button>
         </div>
+        </>}
       </div>
     </div>
 
@@ -1460,12 +1597,14 @@ function BackupRestore({db,refresh,actor,onHome}){
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:14,marginBottom:16}}>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
         <div style={{fontWeight:700,fontSize:14,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>🖥️ Restore from This Device</div>
-        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}><b style={{color:"#ef4444"}}>Warning:</b> overwrites all current data with the file you choose.</div>
-        <label style={{...btn("danger"),display:"inline-block",cursor:"pointer"}}>⬆ Choose JSON File <input type="file" accept=".json" style={{display:"none"}} onChange={loadLocalJSON}/></label>
+        {editable?<>
+          <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}><b style={{color:"#ef4444"}}>Warning:</b> overwrites all current data with the file you choose. Accepts plain .json or encrypted .json.hdenc files.</div>
+          <label style={{...btn("danger"),display:"inline-block",cursor:"pointer"}}>⬆ Choose Backup File <input type="file" accept=".json,.hdenc" style={{display:"none"}} onChange={loadLocalJSON}/></label>
+        </>:<div style={{fontSize:12,color:"var(--muted)"}}>Restoring is restricted for your role.</div>}
       </div>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
-        <div style={{fontWeight:700,fontSize:14,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>☁️ Restore from Google Drive</div>
-        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Browse and restore from a backup previously saved to Drive.</div>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>☁️ {editable?"Restore from Google Drive":"Browse Drive Backups"}</div>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>{editable?"Browse and restore from a backup previously saved to Drive.":"Browse and preview old backups — your role can inspect contents without changing any live data."}</div>
         <button onClick={browseDriveFiles} disabled={driveBusy} style={{...btn("blue"),opacity:driveBusy?0.6:1}}>☁ Browse Drive Backups</button>
       </div>
     </div>
@@ -1483,15 +1622,60 @@ function BackupRestore({db,refresh,actor,onHome}){
               <div style={{fontSize:12,fontWeight:600}}>{f.name}</div>
               <div style={{fontSize:11,color:"var(--muted)"}}>Modified: {fmtDateTime(f.modifiedTime)}</div>
             </div>
-            <button onClick={()=>restoreFromDriveFile(f)} disabled={driveBusy} style={{...btn("danger"),fontSize:11,padding:"4px 10px"}}>Restore this</button>
+            {editable?
+              <button onClick={()=>restoreFromDriveFile(f)} disabled={driveBusy} style={{...btn("danger"),fontSize:11,padding:"4px 10px"}}>Restore this</button>
+              :<button onClick={()=>previewDriveFile(f)} disabled={driveBusy} style={{...btn("ghost"),fontSize:11,padding:"4px 10px"}}>👁 Preview</button>}
           </div>)}
         </div>}
     </div>}
+
+    {previewData&&<Modal title={`Preview: ${previewData.name}`} onClose={()=>setPreviewData(null)}>
+      <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Read-only preview — viewing this does not change any live data. Last modified: {fmtDateTime(previewData.modifiedTime)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8}}>
+        {Object.entries({Schools:previewData.counts.schools,Students:previewData.counts.students,"Camp Types":previewData.counts.campTypes,Sessions:previewData.counts.sessions,Registrations:previewData.counts.registrations,Payments:previewData.counts.payments,Crew:previewData.counts.crew,Expenses:previewData.counts.expenses,Inventory:previewData.counts.inventory}).map(([k,v])=><div key={k} style={{background:"var(--surface2)",borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
+          <div style={{fontSize:16,fontWeight:800,color:"var(--accent)"}}>{v}</div>
+          <div style={{fontSize:10,color:"var(--muted)",fontWeight:600}}>{k}</div>
+        </div>)}
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",marginTop:16}}>
+        <button onClick={()=>setPreviewData(null)} style={btn("ghost")}>Close</button>
+      </div>
+    </Modal>}
+
+    {/* ===== DECRYPT TOOL ===== */}
+    <SectionHeader label="🔓 Decrypt a Downloaded File"/>
+    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18,marginBottom:16}}>
+      <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>If you have a <code>.hdenc</code> file downloaded earlier from this app, choose it here to decrypt it back into a normal, readable CSV or JSON file (requires the Export PIN it was created with).</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+        <label style={{...btn("ghost"),display:"inline-block",cursor:"pointer"}}>Choose .hdenc File <input type="file" accept=".hdenc" style={{display:"none"}} onChange={handleDecryptFileChosen}/></label>
+        {decryptFile&&<>
+          <span style={{fontSize:12,color:"var(--text)"}}>{decryptFile.name}</span>
+          <button onClick={runDecryptAndDownload} style={btn("primary")}>🔓 Decrypt & Download</button>
+        </>}
+      </div>
+    </div>
 
     {driveStatus&&<div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 14px",fontSize:12,color:"var(--text)",marginBottom:16}}>{driveStatus}</div>}
 
     <div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px",fontSize:11,color:"var(--muted)"}}>
       ℹ️ Google Drive save/load requires this app to be hosted online (e.g. GitHub Pages) with your domain authorized in Google Cloud Console. It will not work when opening this file directly from your computer. If a sign-in popup doesn't appear, check that your browser isn't blocking popups for this site. If a save reports success but the file isn't visible in your folder, use "Switch account" above to confirm you're signed into the same Google account that owns the target Drive folder — saves go to whichever account was used to sign in. For privacy, this app only requests access to files it creates itself (not your whole Drive) — so "Browse Drive Backups" will only list backups previously saved by this app, not pre-existing files placed into the folder another way.
+    </div>
+
+    {pinPrompt&&<Modal title={pinPrompt.purpose==="download"?"Enter Export PIN":"Enter Decryption PIN"} onClose={()=>{pinPrompt.resolve(null);setPinPrompt(null);}}>
+      <div style={{fontSize:12,color:"var(--muted)",marginBottom:12}}>{pinPrompt.purpose==="download"?"This PIN will encrypt the file you're about to download. You'll need it again to open the file later.":"Enter the PIN this file was encrypted with."}</div>
+      <PinPromptInput onSubmit={(pin)=>{pinPrompt.resolve(pin);setPinPrompt(null);}} onCancel={()=>{pinPrompt.resolve(null);setPinPrompt(null);}}/>
+    </Modal>}
+  </div>;
+}
+
+// Small helper component for the PIN entry modal — keeps its own input state cleanly.
+function PinPromptInput({onSubmit,onCancel}){
+  const [val,setVal]=useState("");
+  return <div>
+    <input type="password" autoFocus style={inp} value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&val&&onSubmit(val)} placeholder="PIN / passphrase"/>
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+      <button onClick={onCancel} style={btn("ghost")}>Cancel</button>
+      <button onClick={()=>val&&onSubmit(val)} style={btn("primary")}>Confirm</button>
     </div>
   </div>;
 }
@@ -1512,6 +1696,14 @@ function Settings({db,refresh,onHome}){
       </div>
       <Field label="Address"><textarea style={{...inp,minHeight:60}} value={form.address||""} onChange={e=>setForm({...form,address:e.target.value})}/></Field>
       <Field label="Logo URL" hint="Direct image link — appears on invoices"><input style={inp} value={form.logo||""} onChange={e=>setForm({...form,logo:e.target.value})} placeholder="https://..."/></Field>
+      <button onClick={save} style={btn("primary")}>Save Settings</button>
+    </div>
+    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
+      <div style={{fontWeight:700,fontSize:13,marginBottom:6}}>🔒 Local Download Security</div>
+      <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Every CSV/JSON file downloaded to a device (by any role) is encrypted with this PIN. Anyone opening that file later must enter the same PIN to read it — including inside this app's own decrypt tool. <b style={{color:"#dc2626"}}>If this PIN is lost, files already downloaded with it cannot be recovered.</b> Files saved to or loaded from Google Drive are not affected by this PIN.</div>
+      <Field label="Export PIN" hint="Leave blank to disable encryption on downloads (not recommended)">
+        <input type="text" style={inp} value={form.exportPin||""} onChange={e=>setForm({...form,exportPin:e.target.value})} placeholder="e.g. a passphrase or PIN"/>
+      </Field>
       <button onClick={save} style={btn("primary")}>Save Settings</button>
     </div>
   </div>;
@@ -1590,6 +1782,7 @@ function ManageUsers({db,refresh,actor,onHome}){
           <option value="admin">Admin — full access</option>
           <option value="finance">Finance — payments, reports, backup</option>
           <option value="user">User — data entry, no revenue view</option>
+          <option value="viewer">Viewer — see everything, no editing</option>
         </select>
       </Field>
       {err&&<div style={{color:"#ef4444",fontSize:12,marginBottom:10}}>{err}</div>}
@@ -1603,18 +1796,18 @@ function ManageUsers({db,refresh,actor,onHome}){
 
 // ── MAIN APP ──
 const MENU=[
-  {key:"dashboard",label:"Dashboard",icon:"🏠",roles:["admin","finance","user"]},
-  {key:"schools",label:"Schools",icon:"🏫",roles:["admin","user"]},
-  {key:"students",label:"All Students",icon:"🎒",roles:["admin","user"]},
-  {key:"campTypes",label:"Camp Types",icon:"🦖",roles:["admin","user"]},
-  {key:"sessions",label:"Sessions",icon:"📅",roles:["admin","user"]},
-  {key:"crew",label:"Crew",icon:"👥",roles:["admin","user"]},
-  {key:"inventory",label:"Inventory",icon:"📦",roles:["admin","user"]},
-  {key:"payments",label:"Payments",icon:"💳",roles:["admin","finance","user"]},
-  {key:"reports",label:"Reports",icon:"📊",roles:["admin","finance"]},
-  {key:"communications",label:"Communications",icon:"💬",roles:["admin"]},
-  {key:"backup",label:"Backup & Restore",icon:"📁",roles:["admin","finance"]},
-  {key:"auditlog",label:"Audit Log",icon:"📜",roles:["admin"]},
+  {key:"dashboard",label:"Dashboard",icon:"🏠",roles:["admin","finance","user","viewer"]},
+  {key:"schools",label:"Schools",icon:"🏫",roles:["admin","user","viewer"]},
+  {key:"students",label:"All Students",icon:"🎒",roles:["admin","user","viewer"]},
+  {key:"campTypes",label:"Camp Types",icon:"🦖",roles:["admin","user","viewer"]},
+  {key:"sessions",label:"Sessions",icon:"📅",roles:["admin","user","viewer"]},
+  {key:"crew",label:"Crew",icon:"👥",roles:["admin","user","viewer"]},
+  {key:"inventory",label:"Inventory",icon:"📦",roles:["admin","user","viewer"]},
+  {key:"payments",label:"Payments",icon:"💳",roles:["admin","finance","user","viewer"]},
+  {key:"reports",label:"Reports",icon:"📊",roles:["admin","finance","viewer"]},
+  {key:"communications",label:"Communications",icon:"💬",roles:["admin","viewer"]},
+  {key:"backup",label:"Backup & Restore",icon:"📁",roles:["admin","finance","viewer"]},
+  {key:"auditlog",label:"Audit Log",icon:"📜",roles:["admin","viewer"]},
   {key:"settings",label:"Settings",icon:"⚙️",roles:["admin"]},
   {key:"manageUsers",label:"Manage Users",icon:"🔐",roles:["admin"]},
 ];
@@ -1676,7 +1869,7 @@ function App(){
         {page==="inventory"&&<Inventory db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
         {page==="payments"&&<Payments db={db} refresh={refresh} initialFilter={pageFilter} role={user.role} actor={user} onHome={goBackToDashboard}/>}
         {page==="reports"&&<Reports db={db} onHome={goBackToDashboard}/>}
-        {page==="communications"&&<Communications db={db} refresh={refresh} onHome={goBackToDashboard}/>}
+        {page==="communications"&&<Communications db={db} refresh={refresh} onHome={goBackToDashboard} actor={user}/>}
         {page==="backup"&&<BackupRestore db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
         {page==="auditlog"&&<AuditLog db={db} onHome={goBackToDashboard}/>}
         {page==="settings"&&<Settings db={db} refresh={refresh} onHome={goBackToDashboard}/>}
