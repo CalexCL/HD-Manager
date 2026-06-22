@@ -9,6 +9,45 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://apis.google.com/js/api.js"></script>
+<script type="module">
+  // Firebase is ES-module only — load it here and attach what we need to `window`
+  // so the rest of the app (loaded via Babel below, which isn't a module) can use it.
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+    signOut, onAuthStateChanged, updatePassword, deleteUser,
+    EmailAuthProvider, reauthenticateWithCredential
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import {
+    getFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyC04k_HrMfybVjr-CzVfY2Zh6J9TN_RiqE",
+    authDomain: "hd-system-manager.firebaseapp.com",
+    projectId: "hd-system-manager",
+    storageBucket: "hd-system-manager.firebasestorage.app",
+    messagingSenderId: "919090115313",
+    appId: "1:919090115313:web:d85af64c55cb825c8def50"
+  };
+
+  const fbApp = initializeApp(firebaseConfig);
+  const fbAuth = getAuth(fbApp);
+  const fbDb = getFirestore(fbApp);
+
+  // Expose a small, deliberate surface to the rest of the app (window.HDFirebase),
+  // rather than dumping every Firebase internal onto window.
+  window.HDFirebase = {
+    auth: fbAuth,
+    db: fbDb,
+    createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
+    onAuthStateChanged, updatePassword, deleteUser,
+    EmailAuthProvider, reauthenticateWithCredential,
+    doc, setDoc, getDoc, deleteDoc, collection, getDocs,
+    ready: true
+  };
+  window.dispatchEvent(new Event("hdfirebase-ready"));
+</script>
 <style>
 :root{--accent:#16a34a;--bg:#f8fafc;--surface:#fff;--surface2:#f1f5f9;--border:#e2e8f0;--text:#1e293b;--muted:#64748b}
 @media(prefers-color-scheme:dark){:root{--bg:#0f172a;--surface:#1e293b;--surface2:#0f172a;--border:#334155;--text:#f1f5f9;--muted:#94a3b8}}
@@ -26,7 +65,7 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.06.21-11:45";
+const APP_VERSION = "HD System v.2026.06.21-23:15";
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -212,39 +251,104 @@ function PageHeader({crumbs,onBack,onHome,title,action}){
 // ── AUTH ──
 function useAuth(){
   const [user,setUser]=useState(null);
-  const login=(loginId,password)=>{const db=getDB();const found=db.users.find(u=>u.loginId?.toLowerCase()===String(loginId||"").toLowerCase()&&u.password===password);if(found){setUser(found);logAction(found.role,found.name,"LOGIN",`${found.name} logged in`);return true;}return false;};
-  const logout=()=>{if(user)logAction(user.role,user.name,"LOGOUT",`${user.name} logged out`);setUser(null);};
-  return{user,login,logout};
+  const [authReady,setAuthReady]=useState(false);
+
+  // Look up this person's role + display name from Firestore (users/{uid}).
+  const fetchProfile=async(fbUser)=>{
+    const F=window.HDFirebase;
+    try{
+      const snap=await F.getDoc(F.doc(F.db,"users",fbUser.uid));
+      if(snap.exists()){
+        const data=snap.data();
+        return{id:fbUser.uid,email:fbUser.email,name:data.name||fbUser.email,role:data.role||"viewer"};
+      }
+      // No profile yet — shouldn't normally happen, but fail safe to viewer rather than admin.
+      return{id:fbUser.uid,email:fbUser.email,name:fbUser.email,role:"viewer"};
+    }catch(e){
+      console.error("Failed to load user profile",e);
+      return null;
+    }
+  };
+
+  useEffect(()=>{
+    let unsub=()=>{};
+    const attach=()=>{
+      const F=window.HDFirebase;
+      if(!F||!F.ready)return;
+      unsub=F.onAuthStateChanged(F.auth,async(fbUser)=>{
+        if(fbUser){
+          const profile=await fetchProfile(fbUser);
+          setUser(profile);
+        } else {
+          setUser(null);
+        }
+        setAuthReady(true);
+      });
+    };
+    if(window.HDFirebase&&window.HDFirebase.ready)attach();
+    else window.addEventListener("hdfirebase-ready",attach,{once:true});
+    return ()=>unsub();
+  },[]);
+
+  const login=async(email,password)=>{
+    const F=window.HDFirebase;
+    if(!F||!F.ready)return{ok:false,reason:"Sign-in service is still loading. Please wait a moment and try again."};
+    try{
+      const cred=await F.signInWithEmailAndPassword(F.auth,email,password);
+      const profile=await fetchProfile(cred.user);
+      if(!profile)return{ok:false,reason:"Signed in, but could not load your account profile. Contact your Admin."};
+      setUser(profile);
+      logAction(profile.role,profile.name,"LOGIN",`${profile.name} logged in`);
+      return{ok:true,profile};
+    }catch(e){
+      let reason="Invalid email or password.";
+      if(e.code==="auth/too-many-requests")reason="Too many attempts — please wait a moment and try again.";
+      else if(e.code==="auth/network-request-failed")reason="Network error — check your internet connection.";
+      else if(e.code==="auth/invalid-email")reason="That doesn't look like a valid email address.";
+      return{ok:false,reason};
+    }
+  };
+  const logout=async()=>{
+    const F=window.HDFirebase;
+    if(user)logAction(user.role,user.name,"LOGOUT",`${user.name} logged out`);
+    if(F&&F.ready)await F.signOut(F.auth);
+    setUser(null);
+  };
+  return{user,login,logout,authReady};
 }
 
 // ── LOGIN ──
-function LoginScreen({onLogin}){
-  const [loginId,setLoginId]=useState("");
+function LoginScreen({onLogin,authReady}){
+  const [email,setEmail]=useState("");
   const [password,setPassword]=useState("");
   const [err,setErr]=useState("");
-  const [detectedRole,setDetectedRole]=useState(null);
-  useEffect(()=>{
-    const db=getDB();
-    const found=db.users.find(u=>u.loginId?.toLowerCase()===loginId.toLowerCase()&&u.password===password&&loginId&&password);
-    setDetectedRole(found?found.role:null);
-  },[loginId,password]);
-  const handle=()=>{if(!onLogin(loginId,password)){setErr("Invalid login ID or password");setPassword("");setDetectedRole(null);}};
-  const r=detectedRole?ROLE_COLORS[detectedRole]:null;
+  const [busy,setBusy]=useState(false);
+  const [loggedRole,setLoggedRole]=useState(null);
+  const handle=async()=>{
+    if(busy)return;
+    setBusy(true);setErr("");
+    const res=await onLogin(email,password);
+    if(!res.ok){setErr(res.reason||"Invalid email or password");setPassword("");}
+    else{setLoggedRole(res.profile.role);}
+    setBusy(false);
+  };
+  const r=loggedRole?ROLE_COLORS[loggedRole]:null;
   return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)"}}>
     <div style={{textAlign:"center",width:320}}>
       <div style={{fontSize:52,marginBottom:6}}>🦕</div>
       <div style={{fontSize:22,fontWeight:800,color:"var(--accent)",fontFamily:"Georgia,serif"}}>Happy Dino</div>
       <div style={{fontSize:12,color:"var(--muted)",marginBottom:28}}>Xperience Camp Manager</div>
       <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:16,padding:24}}>
-        <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",marginBottom:10,textAlign:"left"}}>LOGIN ID</div>
-        <input type="text" autoCapitalize="none" autoCorrect="off" value={loginId} onChange={e=>{setLoginId(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="Login ID" style={{...inp,fontSize:15,marginBottom:14}}/>
+        <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",marginBottom:10,textAlign:"left"}}>EMAIL</div>
+        <input type="email" autoCapitalize="none" autoCorrect="off" value={email} onChange={e=>{setEmail(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="you@example.com" style={{...inp,fontSize:15,marginBottom:14}}/>
         <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",marginBottom:10,textAlign:"left"}}>PASSWORD</div>
         <input type="password" value={password} onChange={e=>{setPassword(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="Password" style={{...inp,fontSize:15,marginBottom:10}}/>
         {r&&<div style={{marginBottom:10,padding:"8px 0",borderRadius:8,background:r.bg}}>
-          <div style={{fontSize:16,fontWeight:900,color:r.text,letterSpacing:"0.06em"}}>LOGGING IN AS {r.label}</div>
+          <div style={{fontSize:16,fontWeight:900,color:r.text,letterSpacing:"0.06em"}}>LOGGED IN AS {r.label}</div>
         </div>}
         {err&&<div style={{color:"#ef4444",fontSize:12,marginBottom:8}}>{err}</div>}
-        <button onClick={handle} style={{...btn("primary"),width:"100%"}}>Login</button>
+        {!authReady&&<div style={{color:"var(--muted)",fontSize:11,marginBottom:8}}>⏳ Connecting to sign-in service...</div>}
+        <button onClick={handle} disabled={busy||!authReady} style={{...btn("primary"),width:"100%",opacity:(busy||!authReady)?0.6:1}}>{busy?"Signing in...":"Login"}</button>
       </div>
       <div style={{marginTop:18,fontSize:10,color:"var(--muted)"}}>{APP_VERSION}</div>
     </div>
@@ -1710,47 +1814,94 @@ function Settings({db,refresh,onHome}){
 }
 
 // ── MANAGE USERS (Admin only) ──
-function ManageUsers({db,refresh,actor,onHome}){
+function ManageUsers({actor,onHome}){
+  const [users,setUsers]=useState([]);
+  const [loading,setLoading]=useState(true);
   const [showModal,setShowModal]=useState(false);
   const [editing,setEditing]=useState(null);
   const [form,setForm]=useState({});
   const [err,setErr]=useState("");
-  const users=db.users||[];
+  const [busy,setBusy]=useState(false);
 
-  const openAdd=()=>{setForm({id:uid(),name:"",loginId:"",password:"",role:"user"});setEditing(null);setErr("");setShowModal(true);};
-  const openEdit=(u)=>{setForm({...u});setEditing(u.id);setErr("");setShowModal(true);};
+  const loadUsers=async()=>{
+    const F=window.HDFirebase;
+    if(!F||!F.ready)return;
+    setLoading(true);
+    try{
+      const snap=await F.getDocs(F.collection(F.db,"users"));
+      const list=[];
+      snap.forEach(d=>list.push({id:d.id,...d.data()}));
+      setUsers(list);
+    }catch(e){console.error("Failed to load users",e);}
+    setLoading(false);
+  };
+  useEffect(()=>{loadUsers();},[]);
 
-  const save=()=>{
-    const cleanId=(form.loginId||"").trim().toLowerCase();
+  const openAdd=()=>{setForm({email:"",name:"",password:"",role:"user"});setEditing(null);setErr("");setShowModal(true);};
+  const openEdit=(u)=>{setForm({...u,password:""});setEditing(u.id);setErr("");setShowModal(true);};
+
+  const save=async()=>{
+    const F=window.HDFirebase;
+    const email=(form.email||"").trim().toLowerCase();
     if(!form.name?.trim()){setErr("Name is required.");return;}
-    if(!cleanId){setErr("Login ID is required.");return;}
-    if(!form.password){setErr("Password is required.");return;}
-    const dup=users.find(u=>u.loginId?.toLowerCase()===cleanId&&u.id!==form.id);
-    if(dup){setErr("That Login ID is already taken.");return;}
-    const record={...form,loginId:cleanId};
-    const list=editing?users.map(u=>u.id===editing?record:u):[...users,record];
-    setDB({users:list});
-    logAction(actor.role,actor.name,editing?"EDIT_USER":"ADD_USER",`${record.name} (${record.loginId}, ${record.role})`);
-    refresh();setShowModal(false);
+    if(!email||!email.includes("@")){setErr("A valid email address is required.");return;}
+    if(!editing&&!form.password){setErr("Password is required for a new account.");return;}
+    setBusy(true);setErr("");
+    try{
+      if(editing){
+        // Editing only updates the Firestore profile (name/role). Changing another
+        // person's password isn't possible client-side without their own session —
+        // that requires a Firebase Admin SDK call from a server, which this static
+        // app doesn't have. Password resets should go through "Forgot password"
+        // (not yet wired) or be done by the person themselves once logged in.
+        await F.setDoc(F.doc(F.db,"users",editing),{name:form.name.trim(),email,role:form.role||"user"},{merge:true});
+        logAction(actor.role,actor.name,"EDIT_USER",`${form.name} (${email}, ${form.role})`);
+      } else {
+        // Creating a new Firebase Auth user automatically signs the browser in as
+        // that new user, which would kick the Admin out mid-task. We avoid that by
+        // NOT calling createUserWithEmailAndPassword on the Admin's own active app
+        // instance — instead we use a secondary, throwaway Firebase app instance
+        // purely for account creation, so the Admin's own session is untouched.
+        const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+        const { getAuth, createUserWithEmailAndPassword, signOut } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+        const secondaryApp = initializeApp(F.auth.app.options, "secondary-"+Date.now());
+        const secondaryAuth = getAuth(secondaryApp);
+        const cred = await createUserWithEmailAndPassword(secondaryAuth, email, form.password);
+        await F.setDoc(F.doc(F.db,"users",cred.user.uid),{name:form.name.trim(),email,role:form.role||"user"});
+        await signOut(secondaryAuth);
+        logAction(actor.role,actor.name,"ADD_USER",`${form.name} (${email}, ${form.role})`);
+      }
+      await loadUsers();
+      setShowModal(false);
+    }catch(e){
+      let msg=e.message||"Could not save user.";
+      if(e.code==="auth/email-already-in-use")msg="That email is already registered.";
+      else if(e.code==="auth/weak-password")msg="Password should be at least 6 characters.";
+      else if(e.code==="auth/invalid-email")msg="That doesn't look like a valid email address.";
+      setErr(msg);
+    }
+    setBusy(false);
   };
 
-  const del=(u)=>{
+  const del=async(u)=>{
     const adminCount=users.filter(x=>x.role==="admin").length;
     if(u.role==="admin"&&adminCount<=1){alert("Cannot delete the last remaining Admin account.");return;}
     if(u.id===actor.id){alert("You cannot delete the account you're currently logged in as.");return;}
-    if(window.confirm(`Delete user "${u.name}"?`)){
-      setDB({users:users.filter(x=>x.id!==u.id)});
-      logAction(actor.role,actor.name,"DELETE_USER",`${u.name} (${u.loginId})`);
-      refresh();
-    }
+    if(!window.confirm(`Delete user "${u.name}"? This removes their access immediately, but — due to a client-side limitation — their Firebase Authentication login may need separate cleanup by whoever manages the Firebase Console, otherwise they could still technically sign in with no profile (and the app will fail closed, treating them as unauthorized).`))return;
+    const F=window.HDFirebase;
+    try{
+      await F.deleteDoc(F.doc(F.db,"users",u.id));
+      logAction(actor.role,actor.name,"DELETE_USER",`${u.name} (${u.email})`);
+      await loadUsers();
+    }catch(e){alert("Could not delete user: "+e.message);}
   };
 
   return <div>
     <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Manage Users"]} onHome={onHome} title="Manage Users" action={<button onClick={openAdd} style={btn("primary")}>+ Add User</button>}/>
-    <div style={{fontSize:12,color:"var(--muted)",marginTop:-12,marginBottom:14}}>Each user logs in with their own Login ID and Password. Actions they take are recorded under their name in the Audit Log.</div>
+    <div style={{fontSize:12,color:"var(--muted)",marginTop:-12,marginBottom:14}}>Accounts are stored centrally (Firebase) — anyone you add here can log in from any device immediately. Actions they take are recorded under their name in the Audit Log.</div>
+    {loading?<EmptyState icon="⏳" text="Loading users..."/>:
     <div style={{display:"grid",gap:10}}>
       {users.map(u=>{
-        const actionCount=(db.auditLog||[]).filter(a=>a.name===u.name).length;
         return <div key={u.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"14px 16px"}}>
           <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,alignItems:"center"}}>
             <div>
@@ -1759,7 +1910,7 @@ function ManageUsers({db,refresh,actor,onHome}){
                 <RoleBadge role={u.role}/>
                 {u.id===actor.id&&<Badge label="You" color="blue"/>}
               </div>
-              <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Login ID: <b>{u.loginId}</b> · {actionCount} logged action{actionCount===1?"":"s"}</div>
+              <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>{u.email}</div>
             </div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"flex-start"}}>
               <button onClick={()=>openEdit(u)} style={btn("ghost")}>Edit</button>
@@ -1768,15 +1919,18 @@ function ManageUsers({db,refresh,actor,onHome}){
           </div>
         </div>;
       })}
-    </div>
+    </div>}
     {showModal&&<Modal title={editing?"Edit User":"Add User"} onClose={()=>setShowModal(false)}>
       <Field label="Full Name"><input style={inp} value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
-      <Field label="Login ID" hint="Used to log in, e.g. ali.hassan — not case-sensitive">
-        <input style={inp} value={form.loginId||""} onChange={e=>setForm({...form,loginId:e.target.value})} autoCapitalize="none" autoCorrect="off"/>
+      <Field label="Email Address" hint="Used to log in">
+        <input type="email" style={inp} value={form.email||""} onChange={e=>setForm({...form,email:e.target.value})} autoCapitalize="none" autoCorrect="off" disabled={!!editing}/>
       </Field>
-      <Field label="Password" hint={editing?"Leave unchanged or type a new password to reset it":""}>
+      {!editing&&<Field label="Password" hint="At least 6 characters">
         <input style={inp} value={form.password||""} onChange={e=>setForm({...form,password:e.target.value})}/>
-      </Field>
+      </Field>}
+      {editing&&<Field label="Password" hint="Password changes aren't available from this screen — the person can change their own password once logged in (feature coming later), or you can reset it directly in the Firebase Console.">
+        <input style={{...inp,background:"var(--surface2)",color:"var(--muted)"}} value="••••••••" disabled/>
+      </Field>}
       <Field label="Role">
         <select style={inp} value={form.role||"user"} onChange={e=>setForm({...form,role:e.target.value})}>
           <option value="admin">Admin — full access</option>
@@ -1788,7 +1942,7 @@ function ManageUsers({db,refresh,actor,onHome}){
       {err&&<div style={{color:"#ef4444",fontSize:12,marginBottom:10}}>{err}</div>}
       <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
         <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
-        <button onClick={save} style={btn("primary")}>Save</button>
+        <button onClick={save} disabled={busy} style={{...btn("primary"),opacity:busy?0.6:1}}>{busy?"Saving...":"Save"}</button>
       </div>
     </Modal>}
   </div>;
@@ -1813,7 +1967,7 @@ const MENU=[
 ];
 
 function App(){
-  const {user,login,logout}=useAuth();
+  const {user,login,logout,authReady}=useAuth();
   const [page,setPage]=useState("dashboard");
   const [pageFilter,setPageFilter]=useState(null);
   const [db,setDbState]=useState(getDB);
@@ -1822,7 +1976,13 @@ function App(){
 
   useEffect(()=>{if(!localStorage.getItem(DB_KEY))saveDB(initialDB);refresh();},[]);
 
-  if(!user)return <LoginScreen onLogin={login}/>;
+  // While Firebase is determining whether a session already exists (e.g. on page
+  // reload), show a brief loading state instead of flashing the login screen.
+  if(!authReady)return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)"}}>
+    <div style={{textAlign:"center"}}><div style={{fontSize:48,marginBottom:10}}>🦕</div><div style={{color:"var(--muted)",fontSize:13}}>Loading...</div></div>
+  </div>;
+
+  if(!user)return <LoginScreen onLogin={login} authReady={authReady}/>;
 
   const canAccess=(key)=>{const m=MENU.find(m=>m.key===key);return m?.roles.includes(user.role)||false;};
   const navigate=(key,filter)=>{if(canAccess(key)){setPage(key);setPageFilter(filter||null);setSidebarOpen(false);}};
@@ -1873,7 +2033,7 @@ function App(){
         {page==="backup"&&<BackupRestore db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
         {page==="auditlog"&&<AuditLog db={db} onHome={goBackToDashboard}/>}
         {page==="settings"&&<Settings db={db} refresh={refresh} onHome={goBackToDashboard}/>}
-        {page==="manageUsers"&&<ManageUsers db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="manageUsers"&&<ManageUsers actor={user} onHome={goBackToDashboard}/>}
       </div>
     </div>
   </div>;
