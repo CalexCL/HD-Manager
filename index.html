@@ -40,6 +40,8 @@
   window.HDFirebase = {
     auth: fbAuth,
     db: fbDb,
+    config: firebaseConfig,
+    initializeApp, getAuth,
     createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
     onAuthStateChanged, updatePassword, deleteUser,
     EmailAuthProvider, reauthenticateWithCredential,
@@ -65,7 +67,7 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.06.21-23:15";
+const APP_VERSION = "HD System v.2026.06.22-17:00";
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -1862,13 +1864,15 @@ function ManageUsers({actor,onHome}){
         // NOT calling createUserWithEmailAndPassword on the Admin's own active app
         // instance — instead we use a secondary, throwaway Firebase app instance
         // purely for account creation, so the Admin's own session is untouched.
-        const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
-        const { getAuth, createUserWithEmailAndPassword, signOut } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
-        const secondaryApp = initializeApp(F.auth.app.options, "secondary-"+Date.now());
-        const secondaryAuth = getAuth(secondaryApp);
-        const cred = await createUserWithEmailAndPassword(secondaryAuth, email, form.password);
+        // (Uses initializeApp/getAuth already exposed on window.HDFirebase, loaded
+        // once at page-load via a <script type="module"> tag — NOT a dynamic
+        // import() here, since this code runs through Babel's in-browser transpiler
+        // which doesn't support dynamic import() correctly.)
+        const secondaryApp = F.initializeApp(F.config, "secondary-"+Date.now());
+        const secondaryAuth = F.getAuth(secondaryApp);
+        const cred = await F.createUserWithEmailAndPassword(secondaryAuth, email, form.password);
         await F.setDoc(F.doc(F.db,"users",cred.user.uid),{name:form.name.trim(),email,role:form.role||"user"});
-        await signOut(secondaryAuth);
+        await F.signOut(secondaryAuth);
         logAction(actor.role,actor.name,"ADD_USER",`${form.name} (${email}, ${form.role})`);
       }
       await loadUsers();
