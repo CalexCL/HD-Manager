@@ -67,7 +67,7 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.06.22-17:00";
+const APP_VERSION = "HD System v.2026.06.24-19:00";
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -82,6 +82,11 @@ const initialDB={
     {id:"u1",name:"Admin",loginId:"admin",role:"admin",password:"@555*123"},
     {id:"u2",name:"Finance",loginId:"finance",role:"finance",password:"@555*$*"},
     {id:"u3",name:"User",loginId:"user",role:"user",password:"@123*"}
+  ],
+  tshirtSizes:[
+    {id:"ts1",label:"YM",chest:32},{id:"ts2",label:"YL",chest:34},{id:"ts3",label:"YXL",chest:36},
+    {id:"ts4",label:"XS",chest:38},{id:"ts5",label:"S",chest:40},{id:"ts6",label:"M",chest:42},
+    {id:"ts7",label:"L",chest:44},{id:"ts8",label:"XL",chest:46},{id:"ts9",label:"2XL",chest:48}
   ],
   schools:[],students:[],campTypes:[],sessions:[],registrations:[],crew:[],crewAssignments:[],payments:[],expenses:[],inventory:[],communications:[],auditLog:[]
 };
@@ -112,6 +117,12 @@ function getDB(){
     });
     saveDB(merged);
   }
+  // Migration 3: older saves predate the editable T-Shirt Sizes list — seed it in
+  // without touching anything else, so existing data isn't disturbed.
+  if(!Array.isArray(merged.tshirtSizes)||merged.tshirtSizes.length===0){
+    merged.tshirtSizes = initialDB.tshirtSizes;
+    saveDB(merged);
+  }
   return merged;
 }
 function setDB(partial){const db=getDB();saveDB({...db,...partial});}
@@ -130,6 +141,18 @@ const fmt=(n)=>`RM ${parseFloat(n||0).toFixed(2)}`;
 const fmtDate=(d)=>d?new Date(d).toLocaleDateString("en-MY",{day:"2-digit",month:"short",year:"numeric"}):"—";
 const fmtDateTime=(d)=>d?new Date(d).toLocaleString("en-MY",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—";
 const calcAge=(dob)=>{if(!dob)return"—";return Math.floor((Date.now()-new Date(dob).getTime())/(1000*60*60*24*365.25));};
+// Masks a bank account number for on-screen display, e.g. "1234567890" -> "•••• •••• 7890".
+// Only the last 4 digits remain visible; used everywhere bank details are shown unless revealed.
+const maskAccountNo=(acc)=>{
+  if(!acc)return"—";
+  const digits=String(acc).replace(/\s+/g,"");
+  if(digits.length<=4)return"•".repeat(Math.max(0,digits.length-0))+digits;
+  const last4=digits.slice(-4);
+  const maskedLen=digits.length-4;
+  const groups=[]; let remaining=maskedLen;
+  while(remaining>0){groups.push("•".repeat(Math.min(4,remaining)));remaining-=4;}
+  return groups.join(" ")+" "+last4;
+};
 
 // ── ENCRYPTION (Web Crypto, AES-GCM) ──
 // Used to protect any file that leaves the app via local download (CSV/JSON).
@@ -566,7 +589,7 @@ function Dashboard({db,navigate,role}){
     <SectionHeader label="Schools Overview"/>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:20}}>
       <StatCard label="Schools Approached" value={schools.length} color="#7c3aed" onClick={()=>navigate("schools")}/>
-      <StatCard label="With Camps" value={schoolsWithCamps} color="#16a34a" onClick={()=>navigate("schools")}/>
+      <StatCard label="With Camps" value={schoolsWithCamps} color="#16a34a" onClick={()=>navigate("schools","withCamps")}/>
       <StatCard label="Completed Sessions" value={completedCount} color="#2563eb" onClick={()=>navigate("sessions","completed")}/>
       <StatCard label="Scheduled" value={scheduledCount} color="#d97706" onClick={()=>navigate("sessions","scheduled")}/>
     </div>
@@ -636,22 +659,30 @@ function GlobalSearch({db,onResultClick}){
 }
 
 // ── SCHOOLS ──
-function Schools({db,refresh,actor,onHome}){
+function Schools({db,refresh,actor,onHome,initialFilter}){
   const [view,setView]=useState("list");
   const [selSchool,setSelSchool]=useState(null);
   const [showModal,setShowModal]=useState(false);
   const [editing,setEditing]=useState(null);
   const [form,setForm]=useState({});
-  const schools=db.schools||[];
+  const [filter,setFilter]=useState(initialFilter||"all");
+  useEffect(()=>{if(initialFilter)setFilter(initialFilter);},[initialFilter]);
+  const allSchools=db.schools||[];
+  const schools=filter==="withCamps"
+    ? allSchools.filter(s=>(db.sessions||[]).some(ss=>ss.schoolId===s.id))
+    : allSchools;
   const openAdd=()=>{setForm({id:uid(),name:"",address:"",mapUrl:"",principal:"",phone:"",email:"",notes:""});setEditing(null);setShowModal(true);};
   const openEdit=(s)=>{setForm({...s});setEditing(s.id);setShowModal(true);};
-  const save=()=>{const list=editing?schools.map(s=>s.id===editing?form:s):[...schools,form];setDB({schools:list});logAction(actor.role,actor.name,editing?"EDIT_SCHOOL":"ADD_SCHOOL",form.name);refresh();setShowModal(false);};
-  const del=(id)=>{const s=schools.find(x=>x.id===id);if(window.confirm("Delete school?")){setDB({schools:schools.filter(s=>s.id!==id)});logAction(actor.role,actor.name,"DELETE_SCHOOL",s?.name);refresh();}};
+  const save=()=>{const list=editing?allSchools.map(s=>s.id===editing?form:s):[...allSchools,form];setDB({schools:list});logAction(actor.role,actor.name,editing?"EDIT_SCHOOL":"ADD_SCHOOL",form.name);refresh();setShowModal(false);};
+  const del=(id)=>{const s=allSchools.find(x=>x.id===id);if(window.confirm("Delete school?")){setDB({schools:allSchools.filter(s=>s.id!==id)});logAction(actor.role,actor.name,"DELETE_SCHOOL",s?.name);refresh();}};
   if(view==="students"&&selSchool)return <Students db={db} refresh={refresh} school={selSchool} onBack={()=>setView("list")} actor={actor}/>;
   const editable=canEdit(actor);
   return <div>
-    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Schools"]} onHome={onHome} title="Schools" action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Add School</button>}/>
-    {schools.length===0?<EmptyState icon="🏫" text="No schools yet."/>:
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Schools",filter==="withCamps"?"With Camps":null].filter(Boolean)} onHome={onHome} title="Schools" action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Add School</button>}/>
+    <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
+      {[["all","All"],["withCamps","With Camps"]].map(([key,label])=><button key={key} onClick={()=>setFilter(key)} style={{padding:"5px 12px",borderRadius:8,border:"1px solid var(--border)",cursor:"pointer",fontWeight:600,fontSize:12,background:filter===key?"var(--accent)":"var(--surface)",color:filter===key?"#fff":"var(--text)"}}>{label}</button>)}
+    </div>
+    {schools.length===0?<EmptyState icon="🏫" text={filter==="withCamps"?"No schools have had a camp session yet.":"No schools yet."}/>:
     <div style={{display:"grid",gap:10}}>
       {schools.map(s=>{
         const sessionCount=(db.sessions||[]).filter(ss=>ss.schoolId===s.id).length;
@@ -696,13 +727,23 @@ function Students({db,refresh,school,onBack,actor,onHome}){
   const [showModal,setShowModal]=useState(false);
   const [editing,setEditing]=useState(null);
   const [form,setForm]=useState({});
+  const [revealBank,setRevealBank]=useState({});
   const allStudents=db.students||[];
   const students=school?allStudents.filter(s=>s.schoolId===school.id):allStudents;
-  const openAdd=()=>{setForm({id:uid(),schoolId:school?.id||"",name:"",ic:"",dob:"",address:"",className:"",phone:"",parentName:"",parentRelation:"Mother",parentPhone:"",emergencyName:"",emergencyRelation:"Guardian",emergencyPhone:"",allergies:"",tshirtSize:"",notes:""});setEditing(null);setShowModal(true);};
-  const openEdit=(s)=>{setForm({...s});setEditing(s.id);setShowModal(true);};
+  const canSeeBank=actor.role==="admin"||actor.role==="finance";
+  const sizes=db.tshirtSizes||[];
+  const openAdd=()=>{setForm({id:uid(),schoolId:school?.id||"",name:"",nameChinese:"",gender:"",ic:"",dob:"",address:"",className:"",phone:"",
+    parentName:"",parentRelation:"Mother",parentPhone:"",parentPhoneExtra:[],
+    emergencyName:"",emergencyRelation:"Guardian",emergencyPhone:"",emergencyPhoneExtra:[],
+    bankName:"",bankAccountNo:"",
+    allergies:"",tshirtSize:"",notes:""});setEditing(null);setShowModal(true);};
+  const openEdit=(s)=>{setForm({parentPhoneExtra:[],emergencyPhoneExtra:[],...s});setEditing(s.id);setShowModal(true);};
   const save=()=>{const list=editing?allStudents.map(s=>s.id===editing?form:s):[...allStudents,form];setDB({students:list});logAction(actor.role,actor.name,editing?"EDIT_STUDENT":"ADD_STUDENT",form.name);refresh();setShowModal(false);};
   const del=(id)=>{const s=allStudents.find(x=>x.id===id);if(window.confirm("Delete student?")){setDB({students:allStudents.filter(s=>s.id!==id)});logAction(actor.role,actor.name,"DELETE_STUDENT",s?.name);refresh();}};
   const editable=canEdit(actor);
+  const addExtraPhone=(field)=>setForm({...form,[field]:[...(form[field]||[]),""]});
+  const updateExtraPhone=(field,idx,val)=>{const arr=[...(form[field]||[])];arr[idx]=val;setForm({...form,[field]:arr});};
+  const removeExtraPhone=(field,idx)=>setForm({...form,[field]:(form[field]||[]).filter((_,i)=>i!==idx)});
   return <div>
     <PageHeader crumbs={[{label:"Dashboard",nav:onHome},school?"Schools":"Students",school?school.name:null].filter(Boolean)} onBack={onBack} onHome={onHome} title={school?`Students — ${school.name}`:"All Students"} action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Add Student</button>}/>
     {students.length===0?<EmptyState icon="🎒" text="No students yet."/>:
@@ -712,11 +753,13 @@ function Students({db,refresh,school,onBack,actor,onHome}){
         const attended=regs.filter(r=>{const sess=(db.sessions||[]).find(ss=>ss.id===r.sessionId);return sess?.status==="completed";}).length;
         const upcoming=regs.filter(r=>{const sess=(db.sessions||[]).find(ss=>ss.id===r.sessionId);return sess?.status==="scheduled";}).length;
         const siblings=allStudents.filter(st=>st.parentPhone===s.parentPhone&&st.id!==s.id);
+        const isRevealed=revealBank[s.id];
         return <div key={s.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 16px"}}>
           <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
             <div>
-              <div style={{fontWeight:700,fontSize:14}}>{s.name} <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>· {s.className} · Age {calcAge(s.dob)}</span></div>
-              <div style={{fontSize:12,color:"var(--muted)"}}>IC: {s.ic} · {s.parentRelation}: {s.parentName} · {s.parentPhone}</div>
+              <div style={{fontWeight:700,fontSize:14}}>{s.name}{s.nameChinese&&<span style={{fontWeight:400,color:"var(--muted)"}}> ({s.nameChinese})</span>} <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>· {s.className} · Age {calcAge(s.dob)}{s.gender&&` · ${s.gender}`}</span></div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>IC: {s.ic} · {s.parentRelation}: {s.parentName} · {s.parentPhone}{(s.parentPhoneExtra||[]).filter(Boolean).length>0&&`, ${s.parentPhoneExtra.filter(Boolean).join(", ")}`}</div>
+              {canSeeBank&&(s.bankName||s.bankAccountNo)&&<div style={{fontSize:12,color:"var(--muted)"}}>🏦 {s.bankName} · {isRevealed?s.bankAccountNo:maskAccountNo(s.bankAccountNo)} <span onClick={()=>setRevealBank({...revealBank,[s.id]:!isRevealed})} style={{cursor:"pointer",color:"var(--accent)",fontSize:11}}>{isRevealed?"hide":"👁 reveal"}</span></div>}
               {siblings.length>0&&<div style={{fontSize:12,color:"#7c3aed"}}>👨‍👩‍👧 Siblings: {siblings.map(sb=>sb.name).join(", ")}</div>}
               {s.allergies&&<div style={{fontSize:12,color:"#dc2626"}}>⚠ {s.allergies}</div>}
             </div>
@@ -733,31 +776,55 @@ function Students({db,refresh,school,onBack,actor,onHome}){
     {showModal&&<Modal title={editing?"Edit Student":"Add Student"} onClose={()=>setShowModal(false)} wide>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
         <Field label="Full Name"><input style={inp} value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
+        <Field label="Chinese Name"><input style={inp} value={form.nameChinese||""} onChange={e=>setForm({...form,nameChinese:e.target.value})} placeholder="中文姓名"/></Field>
         <Field label="IC / MyKid No"><input style={inp} value={form.ic||""} onChange={e=>setForm({...form,ic:e.target.value})}/></Field>
+        <Field label="Gender"><select style={inp} value={form.gender||""} onChange={e=>setForm({...form,gender:e.target.value})}>
+          <option value="">Select</option><option>Male</option><option>Female</option></select></Field>
         <Field label="Date of Birth"><input type="date" style={inp} value={form.dob||""} onChange={e=>setForm({...form,dob:e.target.value})}/></Field>
         <Field label="Age (auto)"><input style={{...inp,background:"var(--surface2)",color:"var(--muted)"}} value={form.dob?calcAge(form.dob):"—"} readOnly/></Field>
         <Field label="Class Name"><input style={inp} value={form.className||""} onChange={e=>setForm({...form,className:e.target.value})}/></Field>
         <Field label="T-Shirt Size"><select style={inp} value={form.tshirtSize||""} onChange={e=>setForm({...form,tshirtSize:e.target.value})}>
-          <option value="">Select</option>{["XS","S","M","L","XL","XXL"].map(s=><option key={s}>{s}</option>)}</select></Field>
+          <option value="">Select</option>{sizes.map(s=><option key={s.id} value={s.label}>{s.label} ({s.chest})</option>)}</select></Field>
         {!school&&<Field label="School"><select style={inp} value={form.schoolId||""} onChange={e=>setForm({...form,schoolId:e.target.value})}>
           <option value="">Select school</option>{(db.schools||[]).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>}
       </div>
       <Field label="Address"><input style={inp} value={form.address||""} onChange={e=>setForm({...form,address:e.target.value})}/></Field>
       <Field label="Allergies / Medical"><input style={inp} value={form.allergies||""} onChange={e=>setForm({...form,allergies:e.target.value})}/></Field>
+
       <div style={{fontWeight:700,fontSize:12,color:"var(--muted)",margin:"10px 0 8px",textTransform:"uppercase"}}>Parent / Guardian</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"0 10px"}}>
         <Field label="Name"><input style={inp} value={form.parentName||""} onChange={e=>setForm({...form,parentName:e.target.value})}/></Field>
         <Field label="Relation"><select style={inp} value={form.parentRelation||"Mother"} onChange={e=>setForm({...form,parentRelation:e.target.value})}>
           {["Father","Mother","Guardian","Grandfather","Grandmother","Other"].map(r=><option key={r}>{r}</option>)}</select></Field>
-        <Field label="Phone"><input style={inp} value={form.parentPhone||""} onChange={e=>setForm({...form,parentPhone:e.target.value})}/></Field>
+        <Field label="Phone (Primary)"><input style={inp} value={form.parentPhone||""} onChange={e=>setForm({...form,parentPhone:e.target.value})}/></Field>
       </div>
+      {(form.parentPhoneExtra||[]).map((p,i)=><div key={i} style={{display:"flex",gap:8,marginBottom:8}}>
+        <input style={{...inp,flex:1}} placeholder="Additional phone number" value={p} onChange={e=>updateExtraPhone("parentPhoneExtra",i,e.target.value)}/>
+        <button onClick={()=>removeExtraPhone("parentPhoneExtra",i)} style={{...btn("danger"),padding:"8px 10px"}}>✕</button>
+      </div>)}
+      <button onClick={()=>addExtraPhone("parentPhoneExtra")} style={{...btn("ghost"),fontSize:12,marginBottom:14}}>+ Add another contact number</button>
+
+      <div style={{fontWeight:700,fontSize:12,color:"var(--muted)",margin:"10px 0 8px",textTransform:"uppercase"}}>Bank Account Details</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 10px"}}>
+        <Field label="Bank Name"><input style={inp} value={form.bankName||""} onChange={e=>setForm({...form,bankName:e.target.value})}/></Field>
+        <Field label="Account Number" hint="Masked on screen for non-Admin/Finance roles; encrypted in local downloads if an Export PIN is set">
+          <input style={inp} value={form.bankAccountNo||""} onChange={e=>setForm({...form,bankAccountNo:e.target.value})}/>
+        </Field>
+      </div>
+
       <div style={{fontWeight:700,fontSize:12,color:"var(--muted)",margin:"10px 0 8px",textTransform:"uppercase"}}>Emergency Contact</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"0 10px"}}>
         <Field label="Name"><input style={inp} value={form.emergencyName||""} onChange={e=>setForm({...form,emergencyName:e.target.value})}/></Field>
         <Field label="Relation"><select style={inp} value={form.emergencyRelation||"Guardian"} onChange={e=>setForm({...form,emergencyRelation:e.target.value})}>
           {["Guardian","Grandfather","Grandmother","Uncle","Aunt","Friend","Other"].map(r=><option key={r}>{r}</option>)}</select></Field>
-        <Field label="Phone"><input style={inp} value={form.emergencyPhone||""} onChange={e=>setForm({...form,emergencyPhone:e.target.value})}/></Field>
+        <Field label="Phone (Primary)"><input style={inp} value={form.emergencyPhone||""} onChange={e=>setForm({...form,emergencyPhone:e.target.value})}/></Field>
       </div>
+      {(form.emergencyPhoneExtra||[]).map((p,i)=><div key={i} style={{display:"flex",gap:8,marginBottom:8}}>
+        <input style={{...inp,flex:1}} placeholder="Additional phone number" value={p} onChange={e=>updateExtraPhone("emergencyPhoneExtra",i,e.target.value)}/>
+        <button onClick={()=>removeExtraPhone("emergencyPhoneExtra",i)} style={{...btn("danger"),padding:"8px 10px"}}>✕</button>
+      </div>)}
+      <button onClick={()=>addExtraPhone("emergencyPhoneExtra")} style={{...btn("ghost"),fontSize:12,marginBottom:14}}>+ Add another contact number</button>
+
       <Field label="Notes"><textarea style={{...inp,minHeight:50}} value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
       <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
         <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
@@ -773,11 +840,19 @@ function CampTypes({db,refresh,actor,onHome}){
   const [editing,setEditing]=useState(null);
   const [form,setForm]=useState({});
   const campTypes=db.campTypes||[];
-  const openAdd=()=>{setForm({id:uid(),name:"",fee:"",crewFee:"",materialCost:"",mealCost:"",extraCosts:[],discountable:true,sibling2Pct:10,sibling3Pct:20,description:""});setEditing(null);setShowModal(true);};
-  const openEdit=(c)=>{setForm({...c,extraCosts:c.extraCosts||[]});setEditing(c.id);setShowModal(true);};
+  const openAdd=()=>{setForm({id:uid(),name:"",fee:"",crewFeeTiers:[{id:uid(),role:"Lead Facilitator",fee:""},{id:uid(),role:"Facilitator",fee:""},{id:uid(),role:"Assistant",fee:""}],materialCost:"",mealCost:"",extraCosts:[],discountable:true,sibling2Pct:10,sibling3Pct:20,description:""});setEditing(null);setShowModal(true);};
+  const openEdit=(c)=>{
+    // Migrate legacy single crewFee into the tiers list if this camp type predates tiers.
+    const tiers=c.crewFeeTiers&&c.crewFeeTiers.length>0?c.crewFeeTiers:
+      [{id:uid(),role:"Lead Facilitator",fee:c.crewFee||""},{id:uid(),role:"Facilitator",fee:c.crewFee||""},{id:uid(),role:"Assistant",fee:c.crewFee||""}];
+    setForm({...c,extraCosts:c.extraCosts||[],crewFeeTiers:tiers});setEditing(c.id);setShowModal(true);
+  };
   const save=()=>{const list=editing?campTypes.map(c=>c.id===editing?form:c):[...campTypes,form];setDB({campTypes:list});logAction(actor.role,actor.name,editing?"EDIT_CAMPTYPE":"ADD_CAMPTYPE",form.name);refresh();setShowModal(false);};
   const del=(id)=>{const c=campTypes.find(x=>x.id===id);if(window.confirm("Delete?")){setDB({campTypes:campTypes.filter(c=>c.id!==id)});logAction(actor.role,actor.name,"DELETE_CAMPTYPE",c?.name);refresh();}};
   const editable=canEdit(actor);
+  const addTier=()=>setForm({...form,crewFeeTiers:[...(form.crewFeeTiers||[]),{id:uid(),role:"",fee:""}]});
+  const updateTier=(i,field,val)=>{const arr=[...form.crewFeeTiers];arr[i]={...arr[i],[field]:val};setForm({...form,crewFeeTiers:arr});};
+  const removeTier=(i)=>setForm({...form,crewFeeTiers:form.crewFeeTiers.filter((_,j)=>j!==i)});
   return <div>
     <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Camp Types"]} onHome={onHome} title="Camp Types" action={editable&&<button onClick={openAdd} style={btn("primary")}>+ New Camp Type</button>}/>
     {campTypes.length===0?<EmptyState icon="🦖" text="No camp types yet."/>:
@@ -785,11 +860,13 @@ function CampTypes({db,refresh,actor,onHome}){
       {campTypes.map(c=>{
         const sessions=(db.sessions||[]).filter(s=>s.campTypeId===c.id).length;
         const totalCost=parseFloat(c.materialCost||0)+parseFloat(c.mealCost||0)+(c.extraCosts||[]).reduce((a,e)=>a+parseFloat(e.amount||0),0);
+        const tiers=c.crewFeeTiers&&c.crewFeeTiers.length>0?c.crewFeeTiers:null;
         return <div key={c.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"14px 16px"}}>
           <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
             <div>
               <div style={{fontWeight:700,fontSize:14}}>{c.name}</div>
-              <div style={{fontSize:12,color:"var(--muted)"}}>Fee: <b>{fmt(c.fee)}</b> · Crew: <b>{fmt(c.crewFee)}</b> · Est. Cost: <b>{fmt(totalCost)}</b></div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>Fee: <b>{fmt(c.fee)}</b> · Est. Cost: <b>{fmt(totalCost)}</b></div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>Crew: {tiers?tiers.map(t=>`${t.role||"—"} ${fmt(t.fee)}`).join(" · "):fmt(c.crewFee)}</div>
               {c.discountable&&<div style={{fontSize:12,color:"#7c3aed"}}>Sibling: 2nd -{c.sibling2Pct}% · 3rd -{c.sibling3Pct}%</div>}
             </div>
             <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
@@ -805,11 +882,18 @@ function CampTypes({db,refresh,actor,onHome}){
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
         <Field label="Camp Name"><input style={inp} value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
         <Field label="Camp Fee (RM)"><input type="number" style={inp} value={form.fee||""} onChange={e=>setForm({...form,fee:e.target.value})}/></Field>
-        <Field label="Crew Fee / Session (RM)"><input type="number" style={inp} value={form.crewFee||""} onChange={e=>setForm({...form,crewFee:e.target.value})}/></Field>
         <Field label="Material Cost (RM)"><input type="number" style={inp} value={form.materialCost||""} onChange={e=>setForm({...form,materialCost:e.target.value})}/></Field>
         <Field label="Meal Cost / Head (RM)"><input type="number" style={inp} value={form.mealCost||""} onChange={e=>setForm({...form,mealCost:e.target.value})}/></Field>
       </div>
-      <div style={{fontWeight:700,fontSize:11,color:"var(--muted)",margin:"10px 0 6px",textTransform:"uppercase"}}>Extra Cost Items</div>
+      <div style={{fontWeight:700,fontSize:11,color:"var(--muted)",margin:"10px 0 6px",textTransform:"uppercase"}}>Crew Fee Tiers (per role, per session)</div>
+      <div style={{fontSize:11,color:"var(--muted)",marginBottom:8}}>Set a default fee for each crew role. When assigning crew to a session, this default appears automatically based on the role chosen, and can still be overridden for a specific person.</div>
+      {(form.crewFeeTiers||[]).map((t,i)=><div key={t.id||i} style={{display:"flex",gap:8,marginBottom:6}}>
+        <input style={{...inp,flex:2}} placeholder="Role (e.g. Lead Facilitator)" value={t.role} onChange={e=>updateTier(i,"role",e.target.value)}/>
+        <input type="number" style={{...inp,flex:1}} placeholder="RM" value={t.fee} onChange={e=>updateTier(i,"fee",e.target.value)}/>
+        <button onClick={()=>removeTier(i)} style={{...btn("danger"),padding:"8px 10px"}}>✕</button>
+      </div>)}
+      <button onClick={addTier} style={{...btn("ghost"),fontSize:12,marginBottom:12}}>+ Add Fee Tier</button>
+      <div style={{fontWeight:700,fontSize:11,color:"var(--muted)",margin:"10px 0 6px",textTransform:"uppercase"}}>Additional Cost Items</div>
       {(form.extraCosts||[]).map((ec,i)=><div key={i} style={{display:"flex",gap:8,marginBottom:6}}>
         <input style={{...inp,flex:2}} placeholder="Label" value={ec.label} onChange={e=>{const ec2=[...form.extraCosts];ec2[i]={...ec2[i],label:e.target.value};setForm({...form,extraCosts:ec2});}}/>
         <input type="number" style={{...inp,flex:1}} placeholder="RM" value={ec.amount} onChange={e=>{const ec2=[...form.extraCosts];ec2[i]={...ec2[i],amount:e.target.value};setForm({...form,extraCosts:ec2});}}/>
@@ -1004,8 +1088,21 @@ function SessionCrew({session,db,refresh,actor}){
   const assignments=(db.crewAssignments||[]).filter(a=>a.sessionId===session.id);
   const ct=(db.campTypes||[]).find(c=>c.id===session.campTypeId);
   const available=(db.crew||[]).filter(c=>!assignments.map(a=>a.crewId).includes(c.id));
+  const tiers=ct?.crewFeeTiers&&ct.crewFeeTiers.length>0?ct.crewFeeTiers:null;
+
+  // Priority: role-based tier from the Camp Type first (most specific to this camp),
+  // then this crew member's own default fee, then the legacy flat crewFee, then 0.
+  const suggestedFee=(role,crewId)=>{
+    const tier=tiers?.find(t=>t.role===role);
+    if(tier&&tier.fee)return tier.fee;
+    const crewMember=(db.crew||[]).find(c=>c.id===crewId);
+    if(crewMember?.defaultFee)return crewMember.defaultFee;
+    return ct?.crewFee||0;
+  };
+
   const add=()=>{
-    if(!form.crewId)return;const fee=form.feeOverride||(ct?.crewFee||0);
+    if(!form.crewId)return;
+    const fee=form.feeOverride||suggestedFee(form.role,form.crewId);
     setDB({crewAssignments:[...(db.crewAssignments||[]),{id:uid(),sessionId:session.id,crewId:form.crewId,role:form.role,fee,paid:false}]});
     logAction(actor.role,actor.name,"ASSIGN_CREW",form.crewId);
     refresh();setShowModal(false);setForm({crewId:"",role:"Facilitator",feeOverride:""});
@@ -1013,6 +1110,7 @@ function SessionCrew({session,db,refresh,actor}){
   const togglePaid=(id)=>{setDB({crewAssignments:(db.crewAssignments||[]).map(a=>a.id===id?{...a,paid:!a.paid}:a)});refresh();};
   const remove=(id)=>{setDB({crewAssignments:(db.crewAssignments||[]).filter(a=>a.id!==id)});refresh();};
   const editable=canEdit(actor);
+  const roleOptions=tiers?tiers.map(t=>t.role).filter(Boolean):["Lead Facilitator","Facilitator","Assistant","Driver","Support"];
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
       <div style={{fontSize:13,color:"var(--muted)"}}>{assignments.length} crew assigned</div>
@@ -1037,9 +1135,9 @@ function SessionCrew({session,db,refresh,actor}){
       <Field label="Crew Member"><select style={inp} value={form.crewId} onChange={e=>setForm({...form,crewId:e.target.value})}>
         <option value="">Select crew</option>{available.map(c=><option key={c.id} value={c.id}>{c.name} (⭐{c.rating||"—"})</option>)}</select></Field>
       <Field label="Role"><select style={inp} value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>
-        {["Lead Facilitator","Facilitator","Assistant","Driver","Support"].map(r=><option key={r}>{r}</option>)}</select></Field>
-      <Field label="Fee (RM)" hint={`Default from camp type: ${fmt(ct?.crewFee)}`}>
-        <input type="number" style={inp} value={form.feeOverride} onChange={e=>setForm({...form,feeOverride:e.target.value})} placeholder={fmt(ct?.crewFee||0)}/></Field>
+        {roleOptions.map(r=><option key={r}>{r}</option>)}</select></Field>
+      <Field label="Fee (RM)" hint={`Suggested: ${fmt(suggestedFee(form.role,form.crewId))} (role tier → this person's default → camp type default)`}>
+        <input type="number" style={inp} value={form.feeOverride} onChange={e=>setForm({...form,feeOverride:e.target.value})} placeholder={fmt(suggestedFee(form.role,form.crewId))}/></Field>
       <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
         <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
         <button onClick={add} style={btn("primary")}>Assign</button>
@@ -1113,7 +1211,7 @@ function SessionExpenses({session,db,refresh,actor}){
 function Crew({db,refresh,actor,onHome}){
   const [showModal,setShowModal]=useState(false);const [editing,setEditing]=useState(null);const [form,setForm]=useState({});
   const crew=db.crew||[];
-  const openAdd=()=>{setForm({id:uid(),name:"",nric:"",dob:"",address:"",phone:"",email:"",rating:3,notes:""});setEditing(null);setShowModal(true);};
+  const openAdd=()=>{setForm({id:uid(),name:"",nameChinese:"",gender:"",nric:"",dob:"",address:"",phone:"",email:"",rating:3,defaultFee:"",notes:""});setEditing(null);setShowModal(true);};
   const openEdit=(c)=>{setForm({...c});setEditing(c.id);setShowModal(true);};
   const save=()=>{const list=editing?crew.map(c=>c.id===editing?form:c):[...crew,form];setDB({crew:list});logAction(actor.role,actor.name,editing?"EDIT_CREW":"ADD_CREW",form.name);refresh();setShowModal(false);};
   const del=(id)=>{const c=crew.find(x=>x.id===id);if(window.confirm("Delete?")){setDB({crew:crew.filter(c=>c.id!==id)});logAction(actor.role,actor.name,"DELETE_CREW",c?.name);refresh();}};
@@ -1129,9 +1227,9 @@ function Crew({db,refresh,actor,onHome}){
         return <div key={c.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"14px 16px"}}>
           <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
             <div>
-              <div style={{fontWeight:700,fontSize:14}}>{c.name} <span style={{color:"#f59e0b"}}>{"★".repeat(Math.round(c.rating||0))}</span></div>
-              <div style={{fontSize:12,color:"var(--muted)"}}>{c.phone} · {c.email}</div>
-              <div style={{fontSize:12,color:"var(--muted)"}}>NRIC: {c.nric} · Age: {calcAge(c.dob)}</div>
+              <div style={{fontWeight:700,fontSize:14}}>{c.name}{c.nameChinese&&<span style={{fontWeight:400,color:"var(--muted)"}}> ({c.nameChinese})</span>} <span style={{color:"#f59e0b"}}>{"★".repeat(Math.round(c.rating||0))}</span></div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>{c.phone} · {c.email}{c.gender&&` · ${c.gender}`}</div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>NRIC: {c.nric} · Age: {calcAge(c.dob)}{c.defaultFee&&` · Default fee: ${fmt(c.defaultFee)}/session`}</div>
             </div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"flex-start"}}>
               <Badge label={`${asgn.length} sessions`} color="purple"/>
@@ -1147,13 +1245,19 @@ function Crew({db,refresh,actor,onHome}){
     {showModal&&editable&&<Modal title={editing?"Edit Crew":"Add Crew"} onClose={()=>setShowModal(false)} wide>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
         <Field label="Full Name"><input style={inp} value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
+        <Field label="Chinese Name"><input style={inp} value={form.nameChinese||""} onChange={e=>setForm({...form,nameChinese:e.target.value})} placeholder="中文姓名"/></Field>
         <Field label="NRIC"><input style={inp} value={form.nric||""} onChange={e=>setForm({...form,nric:e.target.value})}/></Field>
+        <Field label="Gender"><select style={inp} value={form.gender||""} onChange={e=>setForm({...form,gender:e.target.value})}>
+          <option value="">Select</option><option>Male</option><option>Female</option></select></Field>
         <Field label="Date of Birth"><input type="date" style={inp} value={form.dob||""} onChange={e=>setForm({...form,dob:e.target.value})}/></Field>
         <Field label="Age (auto)"><input style={{...inp,background:"var(--surface2)",color:"var(--muted)"}} value={form.dob?calcAge(form.dob):"—"} readOnly/></Field>
         <Field label="Phone"><input style={inp} value={form.phone||""} onChange={e=>setForm({...form,phone:e.target.value})}/></Field>
         <Field label="Email"><input style={inp} value={form.email||""} onChange={e=>setForm({...form,email:e.target.value})}/></Field>
       </div>
       <Field label="Address"><input style={inp} value={form.address||""} onChange={e=>setForm({...form,address:e.target.value})}/></Field>
+      <Field label="Default Fee per Session (RM)" hint="Used as a starting suggestion when assigning this person to a session — the role-based fee from the Camp Type takes priority unless overridden">
+        <input type="number" style={inp} value={form.defaultFee||""} onChange={e=>setForm({...form,defaultFee:e.target.value})} placeholder="Optional"/>
+      </Field>
       <Field label={`Performance Rating: ${form.rating||3}/5`}>
         <input type="range" min={1} max={5} value={form.rating||3} onChange={e=>setForm({...form,rating:parseInt(e.target.value)})} style={{width:"100%"}}/></Field>
       <Field label="Notes"><textarea style={{...inp,minHeight:50}} value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
@@ -1411,18 +1515,22 @@ function BackupRestore({db,refresh,actor,onHome}){
     (d.schools||[]).forEach(s=>{const sc=(d.sessions||[]).filter(ss=>ss.schoolId===s.id).length;const st=(d.students||[]).filter(st=>st.schoolId===s.id).length;csv+=row(s.name,s.address,s.principal,s.phone,s.email,sc,st,s.notes);});
     csv+="\n";
     csv+=`"---- STUDENTS ----"\n`;
-    csv+=row("Name","IC/MyKid","DOB","Age","Class","School","T-Shirt","Parent Name","Relation","Parent Phone","Emergency Name","Emergency Phone","Allergies","Camps Attended","Upcoming Camps");
+    csv+=row("Name","Chinese Name","Gender","IC/MyKid","DOB","Age","Class","School","T-Shirt","Parent Name","Relation","Parent Phone","Parent Extra Phones","Bank Name","Bank Account No","Emergency Name","Emergency Phone","Emergency Extra Phones","Allergies","Camps Attended","Upcoming Camps");
     (d.students||[]).forEach(s=>{
       const school=(d.schools||[]).find(sc=>sc.id===s.schoolId);
       const regs=(d.registrations||[]).filter(r=>r.studentId===s.id);
       const attended=regs.filter(r=>{const sess=(d.sessions||[]).find(ss=>ss.id===r.sessionId);return sess?.status==="completed";}).length;
       const upcoming=regs.filter(r=>{const sess=(d.sessions||[]).find(ss=>ss.id===r.sessionId);return sess?.status==="scheduled";}).length;
-      csv+=row(s.name,s.ic,s.dob,calcAge(s.dob),s.className,school?.name||"",s.tshirtSize,s.parentName,s.parentRelation,s.parentPhone,s.emergencyName,s.emergencyPhone,s.allergies,attended,upcoming);
+      csv+=row(s.name,s.nameChinese||"",s.gender||"",s.ic,s.dob,calcAge(s.dob),s.className,school?.name||"",s.tshirtSize,s.parentName,s.parentRelation,s.parentPhone,(s.parentPhoneExtra||[]).filter(Boolean).join("; "),s.bankName||"",s.bankAccountNo||"",s.emergencyName,s.emergencyPhone,(s.emergencyPhoneExtra||[]).filter(Boolean).join("; "),s.allergies,attended,upcoming);
     });
     csv+="\n";
     csv+=`"---- CAMP TYPES ----"\n`;
-    csv+=row("Name","Fee (RM)","Crew Fee (RM)","Material Cost","Meal Cost","Sibling Discount","2nd %","3rd %","Sessions Used");
-    (d.campTypes||[]).forEach(c=>{const sessions=(d.sessions||[]).filter(s=>s.campTypeId===c.id).length;csv+=row(c.name,c.fee,c.crewFee,c.materialCost,c.mealCost,c.discountable?"Yes":"No",c.sibling2Pct,c.sibling3Pct,sessions);});
+    csv+=row("Name","Fee (RM)","Crew Fee Tiers","Material Cost","Meal Cost","Sibling Discount","2nd %","3rd %","Sessions Used");
+    (d.campTypes||[]).forEach(c=>{
+      const sessions=(d.sessions||[]).filter(s=>s.campTypeId===c.id).length;
+      const tiersStr=(c.crewFeeTiers&&c.crewFeeTiers.length>0)?c.crewFeeTiers.map(t=>`${t.role||"—"}:${t.fee||0}`).join("; "):(c.crewFee||"");
+      csv+=row(c.name,c.fee,tiersStr,c.materialCost,c.mealCost,c.discountable?"Yes":"No",c.sibling2Pct,c.sibling3Pct,sessions);
+    });
     csv+="\n";
     csv+=`"---- CAMP SESSIONS ----"\n`;
     csv+=row("School","Camp Type","Date","Time","Status","Students Registered","Crew Assigned","Revenue (RM)","Expenses (RM)","Net P&L (RM)");
@@ -1459,8 +1567,8 @@ function BackupRestore({db,refresh,actor,onHome}){
     });
     csv+="\n";
     csv+=`"---- CREW ----"\n`;
-    csv+=row("Name","NRIC","DOB","Age","Phone","Email","Rating","Total Sessions","Total Earned (RM)","Unpaid Sessions");
-    (d.crew||[]).forEach(c=>{const asgn=(d.crewAssignments||[]).filter(a=>a.crewId===c.id);const earned=asgn.reduce((a,x)=>a+parseFloat(x.fee||0),0);const unpaid=asgn.filter(a=>!a.paid).length;csv+=row(c.name,c.nric,c.dob,calcAge(c.dob),c.phone,c.email,c.rating,asgn.length,earned.toFixed(2),unpaid);});
+    csv+=row("Name","Chinese Name","Gender","NRIC","DOB","Age","Phone","Email","Default Fee (RM)","Rating","Total Sessions","Total Earned (RM)","Unpaid Sessions");
+    (d.crew||[]).forEach(c=>{const asgn=(d.crewAssignments||[]).filter(a=>a.crewId===c.id);const earned=asgn.reduce((a,x)=>a+parseFloat(x.fee||0),0);const unpaid=asgn.filter(a=>!a.paid).length;csv+=row(c.name,c.nameChinese||"",c.gender||"",c.nric,c.dob,calcAge(c.dob),c.phone,c.email,c.defaultFee||"",c.rating,asgn.length,earned.toFixed(2),unpaid);});
     csv+="\n";
     csv+=`"---- CREW ASSIGNMENTS ----"\n`;
     csv+=row("Crew Name","School","Camp Type","Session Date","Role","Fee (RM)","Paid");
@@ -1789,7 +1897,15 @@ function PinPromptInput({onSubmit,onCancel}){
 // ── SETTINGS ──
 function Settings({db,refresh,onHome}){
   const [form,setForm]=useState({...db.settings});
+  const [sizeForm,setSizeForm]=useState(db.tshirtSizes||[]);
   const save=()=>{setDB({settings:form});refresh();alert("Settings saved!");};
+  const addSize=()=>setSizeForm([...sizeForm,{id:uid(),label:"",chest:""}]);
+  const updateSize=(i,field,val)=>{const arr=[...sizeForm];arr[i]={...arr[i],[field]:val};setSizeForm(arr);};
+  const removeSize=(i)=>setSizeForm(sizeForm.filter((_,j)=>j!==i));
+  const saveSizes=()=>{
+    const cleaned=sizeForm.filter(s=>s.label.trim());
+    setDB({tshirtSizes:cleaned});setSizeForm(cleaned);refresh();alert("T-Shirt sizes saved!");
+  };
   return <div>
     <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Settings"]} onHome={onHome} title="Settings"/>
     <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18,marginBottom:16}}>
@@ -1803,6 +1919,17 @@ function Settings({db,refresh,onHome}){
       <Field label="Address"><textarea style={{...inp,minHeight:60}} value={form.address||""} onChange={e=>setForm({...form,address:e.target.value})}/></Field>
       <Field label="Logo URL" hint="Direct image link — appears on invoices"><input style={inp} value={form.logo||""} onChange={e=>setForm({...form,logo:e.target.value})} placeholder="https://..."/></Field>
       <button onClick={save} style={btn("primary")}>Save Settings</button>
+    </div>
+    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18,marginBottom:16}}>
+      <div style={{fontWeight:700,fontSize:13,marginBottom:6}}>👕 T-Shirt Sizes</div>
+      <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Manage the size labels and chest measurements available when adding a student. Changes here don't affect students who already have a size selected.</div>
+      {sizeForm.map((s,i)=><div key={s.id||i} style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}>
+        <input style={{...inp,flex:2}} placeholder="Label (e.g. YM)" value={s.label} onChange={e=>updateSize(i,"label",e.target.value)}/>
+        <input type="number" style={{...inp,flex:1}} placeholder="Chest size" value={s.chest} onChange={e=>updateSize(i,"chest",e.target.value)}/>
+        <button onClick={()=>removeSize(i)} style={{...btn("danger"),padding:"8px 10px"}}>✕</button>
+      </div>)}
+      <button onClick={addSize} style={{...btn("ghost"),fontSize:12,marginBottom:14}}>+ Add Size</button>
+      <div><button onClick={saveSizes} style={btn("primary")}>Save Sizes</button></div>
     </div>
     <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18}}>
       <div style={{fontWeight:700,fontSize:13,marginBottom:6}}>🔒 Local Download Security</div>
@@ -2025,7 +2152,7 @@ function App(){
       </div>
       <div style={{flex:1,padding:"20px 16px",maxWidth:960,width:"100%",margin:"0 auto"}}>
         {page==="dashboard"&&<Dashboard db={db} navigate={navigate} role={user.role}/>}
-        {page==="schools"&&<Schools db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="schools"&&<Schools db={db} refresh={refresh} actor={user} onHome={goBackToDashboard} initialFilter={pageFilter}/>}
         {page==="students"&&<Students db={db} refresh={refresh} onHome={goBackToDashboard} actor={user}/>}
         {page==="campTypes"&&<CampTypes db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
         {page==="sessions"&&<Sessions db={db} refresh={refresh} initialFilter={pageFilter} actor={user} onHome={goBackToDashboard}/>}
