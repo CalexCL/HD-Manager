@@ -67,7 +67,7 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.06.24-19:00";
+const APP_VERSION = "HD System v.2026.07.01-00:30";
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -88,7 +88,9 @@ const initialDB={
     {id:"ts4",label:"XS",chest:38},{id:"ts5",label:"S",chest:40},{id:"ts6",label:"M",chest:42},
     {id:"ts7",label:"L",chest:44},{id:"ts8",label:"XL",chest:46},{id:"ts9",label:"2XL",chest:48}
   ],
-  schools:[],students:[],campTypes:[],sessions:[],registrations:[],crew:[],crewAssignments:[],payments:[],expenses:[],inventory:[],communications:[],auditLog:[]
+  schools:[],students:[],campTypes:[],sessions:[],registrations:[],crew:[],crewAssignments:[],payments:[],expenses:[],inventory:[],communications:[],auditLog:[],
+  purchases:[],accountingInvoices:[],bills:[],accountingPayments:[],receipts:[],creditNotes:[],refunds:[],
+  acctSeq:{INV:0,BILL:0,REC:0,CN:0,REF:0,PUR:0,PAY:0}
 };
 function getDB(){
   const s=loadDB();
@@ -123,9 +125,27 @@ function getDB(){
     merged.tshirtSizes = initialDB.tshirtSizes;
     saveDB(merged);
   }
+  // Migration 4: accounting module — seed empty collections for existing saves.
+  let acctDirty=false;
+  ["purchases","accountingInvoices","bills","accountingPayments","receipts","creditNotes","refunds"].forEach(k=>{
+    if(!Array.isArray(merged[k])){merged[k]=[];acctDirty=true;}
+  });
+  if(!merged.acctSeq){merged.acctSeq={INV:0,BILL:0,REC:0,CN:0,REF:0,PUR:0,PAY:0};acctDirty=true;}
+  if(acctDirty)saveDB(merged);
   return merged;
 }
 function setDB(partial){const db=getDB();saveDB({...db,...partial});}
+
+// Generate the next sequential document number for accounting docs.
+// Format: PREFIX-YYYY-NNNN  e.g. INV-2026-0001
+function nextDocNo(prefix){
+  const db=getDB();
+  const seq={...db.acctSeq||{}};
+  seq[prefix]=(seq[prefix]||0)+1;
+  setDB({acctSeq:seq});
+  const year=new Date().getFullYear();
+  return `${prefix}-${year}-${String(seq[prefix]).padStart(4,"0")}`;
+}
 
 // ── AUDIT LOG ──
 function logAction(actorRole,actorName,action,detail){
@@ -140,6 +160,64 @@ const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const fmt=(n)=>`RM ${parseFloat(n||0).toFixed(2)}`;
 const fmtDate=(d)=>d?new Date(d).toLocaleDateString("en-MY",{day:"2-digit",month:"short",year:"numeric"}):"—";
 const fmtDateTime=(d)=>d?new Date(d).toLocaleString("en-MY",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—";
+
+// ── ACCOUNTING HELPERS ──
+const calcLineTotal=(qty,unitPrice)=>parseFloat(qty||0)*parseFloat(unitPrice||0);
+const calcSubtotal=(lines)=>(lines||[]).reduce((a,l)=>a+calcLineTotal(l.qty,l.unitPrice),0);
+const calcSst=(subtotal,sstPct)=>sstPct>0?subtotal*(parseFloat(sstPct)/100):0;
+const calcDocTotal=(lines,sstPct)=>{const sub=calcSubtotal(lines);return sub+calcSst(sub,sstPct);};
+const PAYMENT_METHODS=["Cash","Bank Transfer","Cheque","FPX","Credit Card","Debit Card","Other"];
+const DOC_STATUS_COLORS={draft:"gray",sent:"blue",paid:"green","partially paid":"amber",overdue:"red",cancelled:"red",issued:"green",applied:"purple"};
+// Shared printable document renderer — opens in a new tab
+const printDoc=(html)=>{const w=window.open("","_blank");w.document.write(html);w.document.close();w.print();};
+// Build a standard printable document HTML string
+function buildDocHtml(settings,{docType,docNo,date,toName,toAddress,lines,sstPct,notes,footer,extraMeta}){
+  const sub=calcSubtotal(lines);
+  const sst=calcSst(sub,sstPct||0);
+  const total=sub+sst;
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${docType} ${docNo}</title>
+  <style>body{font-family:Arial,sans-serif;font-size:13px;color:#222;margin:0;padding:24px}
+  .header{display:flex;justify-content:space-between;border-bottom:2px solid #16a34a;padding-bottom:12px;margin-bottom:20px}
+  .co-name{font-size:20px;font-weight:900;color:#16a34a}.doc-title{font-size:22px;font-weight:900;color:#333;text-align:right}
+  .doc-no{font-size:14px;color:#555;text-align:right}.meta{display:grid;grid-template-columns:1fr 1fr;gap:0 32px;margin-bottom:18px}
+  .to-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 14px}
+  table{width:100%;border-collapse:collapse;margin:16px 0}
+  th{background:#1e293b;color:#fff;padding:8px 10px;text-align:left;font-size:12px}
+  td{padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12px}
+  .totals{width:260px;margin-left:auto;margin-top:8px}
+  .totals tr td{border:none;padding:4px 8px}.totals tr.grand td{font-weight:900;font-size:15px;border-top:2px solid #333}
+  .footer{margin-top:28px;font-size:11px;color:#888;border-top:1px solid #e2e8f0;padding-top:10px}
+  @media print{body{padding:0}}</style></head><body>
+  <div class="header">
+    <div>${settings?.logo?`<img src="${settings.logo}" style="height:50px;margin-bottom:6px"><br>`:""}
+      <span class="co-name">${settings?.companyName||"Happy Dino Xperience Camp"}</span><br>
+      <span style="font-size:11px;color:#555">${settings?.address||""}<br>
+      Tel: ${settings?.phone||""} | ${settings?.email||""}<br>
+      TIN: ${settings?.tin||""}</span></div>
+    <div><div class="doc-title">${docType}</div>
+      <div class="doc-no">${docNo}</div>
+      <div style="font-size:12px;color:#555;margin-top:4px">Date: ${fmtDate(date)}</div>
+      ${extraMeta||""}
+    </div>
+  </div>
+  <div class="meta">
+    <div class="to-box"><div style="font-size:11px;font-weight:700;color:#555;margin-bottom:4px">TO</div>
+      <div style="font-weight:700">${toName||"—"}</div>
+      <div style="font-size:11px;color:#555">${(toAddress||"").replace(/\n/g,"<br>")}</div></div>
+    <div></div>
+  </div>
+  <table><thead><tr><th>#</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit Price (RM)</th><th style="text-align:right">Amount (RM)</th></tr></thead>
+  <tbody>${(lines||[]).map((l,i)=>`<tr><td>${i+1}</td><td>${l.description||""}</td><td style="text-align:right">${l.qty||1}</td><td style="text-align:right">${parseFloat(l.unitPrice||0).toFixed(2)}</td><td style="text-align:right">${calcLineTotal(l.qty,l.unitPrice).toFixed(2)}</td></tr>`).join("")}
+  </tbody></table>
+  <table class="totals"><tbody>
+    <tr><td>Subtotal</td><td style="text-align:right">RM ${sub.toFixed(2)}</td></tr>
+    ${(sstPct||0)>0?`<tr><td>SST (${sstPct}%)</td><td style="text-align:right">RM ${sst.toFixed(2)}</td></tr>`:""}
+    <tr class="grand"><td>TOTAL</td><td style="text-align:right">RM ${total.toFixed(2)}</td></tr>
+  </tbody></table>
+  ${notes?`<div style="margin-top:16px;font-size:12px"><b>Notes:</b> ${notes}</div>`:""}
+  <div class="footer">${footer||"Thank you for your business."}</div>
+  </body></html>`;
+}
 const calcAge=(dob)=>{if(!dob)return"—";return Math.floor((Date.now()-new Date(dob).getTime())/(1000*60*60*24*365.25));};
 // Masks a bank account number for on-screen display, e.g. "1234567890" -> "•••• •••• 7890".
 // Only the last 4 digits remain visible; used everywhere bank details are shown unless revealed.
@@ -2079,6 +2157,602 @@ function ManageUsers({actor,onHome}){
   </div>;
 }
 
+// ── ACCOUNTING: SHARED LINE ITEM EDITOR ──
+function LineItemEditor({lines,onChange}){
+  const add=()=>onChange([...lines,{id:uid(),description:"",qty:1,unitPrice:""}]);
+  const update=(i,f,v)=>{const a=[...lines];a[i]={...a[i],[f]:v};onChange(a);};
+  const remove=(i)=>onChange(lines.filter((_,j)=>j!==i));
+  return <div>
+    {lines.map((l,i)=><div key={l.id||i} style={{display:"grid",gridTemplateColumns:"3fr 1fr 1fr auto",gap:6,marginBottom:6,alignItems:"center"}}>
+      <input style={inp} placeholder="Description" value={l.description} onChange={e=>update(i,"description",e.target.value)}/>
+      <input type="number" style={inp} placeholder="Qty" value={l.qty} onChange={e=>update(i,"qty",e.target.value)}/>
+      <input type="number" style={inp} placeholder="Unit Price" value={l.unitPrice} onChange={e=>update(i,"unitPrice",e.target.value)}/>
+      <button onClick={()=>remove(i)} style={{...btn("danger"),padding:"8px 10px"}}>✕</button>
+    </div>)}
+    <div style={{display:"grid",gridTemplateColumns:"3fr 1fr 1fr auto",gap:6,marginBottom:4}}>
+      <div style={{fontSize:11,color:"var(--muted)",paddingLeft:2}}>Description</div>
+      <div style={{fontSize:11,color:"var(--muted)"}}>Qty</div>
+      <div style={{fontSize:11,color:"var(--muted)"}}>Unit Price (RM)</div>
+      <div/>
+    </div>
+    <button onClick={add} style={{...btn("ghost"),fontSize:12}}>+ Add Line Item</button>
+  </div>;
+}
+
+function SstField({sstPct,onChange,subtotal}){
+  const sst=calcSst(subtotal,sstPct);
+  return <div style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:8,padding:"10px 14px",marginTop:8}}>
+    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+      <div style={{fontSize:12,fontWeight:700}}>SST Rate (%)</div>
+      <input type="number" style={{...inp,width:80}} value={sstPct} onChange={e=>onChange(e.target.value)} placeholder="0"/>
+      <div style={{display:"flex",gap:6}}>
+        {[0,6,8].map(r=><button key={r} onClick={()=>onChange(r)} style={{...btn(r===parseFloat(sstPct)?"primary":"ghost"),padding:"4px 10px",fontSize:11}}>{r}%</button>)}
+      </div>
+    </div>
+    <div style={{marginTop:8,fontSize:12,color:"var(--muted)"}}>
+      Subtotal: <b>RM {subtotal.toFixed(2)}</b>
+      {parseFloat(sstPct)>0&&<> · SST ({sstPct}%): <b>RM {sst.toFixed(2)}</b></>}
+      · Total: <b style={{color:"var(--accent)"}}>RM {(subtotal+sst).toFixed(2)}</b>
+    </div>
+  </div>;
+}
+
+function DocStatusBadge({status}){
+  const color=DOC_STATUS_COLORS[status?.toLowerCase()]||"gray";
+  return <Badge label={status||"—"} color={color}/>;
+}
+
+// ── ACCOUNTING: PURCHASES ──
+function Purchases({db,refresh,actor,onHome}){
+  const [showModal,setShowModal]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [form,setForm]=useState({});
+  const [preview,setPreview]=useState(null);
+  const purchases=db.purchases||[];
+  const editable=canEdit(actor)||actor.role==="finance";
+  const blank=()=>({id:uid(),docNo:nextDocNo("PUR"),date:new Date().toISOString().slice(0,10),supplier:"",category:"Materials",description:"",amount:"",sessionId:"",notes:"",photo:""});
+  const openAdd=()=>{setForm(blank());setEditing(null);setShowModal(true);};
+  const openEdit=(p)=>{setForm({...p});setEditing(p.id);setShowModal(true);};
+  const save=()=>{
+    const list=editing?purchases.map(p=>p.id===editing?form:p):[...purchases,form];
+    setDB({purchases:list});logAction(actor.role,actor.name,editing?"EDIT_PURCHASE":"ADD_PURCHASE",form.docNo);
+    refresh();setShowModal(false);
+  };
+  const del=(id)=>{if(!window.confirm("Delete purchase record?"))return;
+    setDB({purchases:purchases.filter(p=>p.id!==id)});refresh();};
+  const handlePhoto=(e)=>{const file=e.target.files[0];if(!file)return;
+    const reader=new FileReader();reader.onload=ev=>setForm({...form,photo:ev.target.result});reader.readAsDataURL(file);};
+  const cats=["Materials","Equipment","Services","Utilities","Transport","Meals","Others"];
+  const total=purchases.reduce((a,p)=>a+parseFloat(p.amount||0),0);
+  return <div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Accounting","Purchases"]} onHome={onHome} title="Purchases"
+      action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Add Purchase</button>}/>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+      <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px"}}>
+        <div style={{fontSize:11,color:"var(--muted)"}}>Total Purchases</div>
+        <div style={{fontWeight:800,fontSize:20,color:"var(--accent)"}}>RM {total.toFixed(2)}</div>
+      </div>
+      <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px"}}>
+        <div style={{fontSize:11,color:"var(--muted)"}}>Records</div>
+        <div style={{fontWeight:800,fontSize:20}}>{purchases.length}</div>
+      </div>
+    </div>
+    {purchases.length===0?<EmptyState icon="🧾" text="No purchase records yet."/>:
+    <div style={{display:"grid",gap:8}}>
+      {[...purchases].reverse().map(p=>{
+        const sess=(db.sessions||[]).find(s=>s.id===p.sessionId);
+        const school=sess?(db.schools||[]).find(s=>s.id===sess.schoolId):null;
+        return <div key={p.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 16px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+            <div style={{flex:1}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <span style={{fontWeight:700,fontSize:13}}>{p.docNo}</span>
+                <Badge label={p.category} color="blue"/>
+                {sess&&<Badge label={school?.name||"Session"} color="purple"/>}
+              </div>
+              <div style={{fontSize:13,marginTop:4}}>{p.supplier} — {p.description}</div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>{fmtDate(p.date)}{p.notes&&` · ${p.notes}`}</div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+              <span style={{fontWeight:800,fontSize:15,color:"var(--accent)"}}>RM {parseFloat(p.amount||0).toFixed(2)}</span>
+              <div style={{display:"flex",gap:6}}>
+                {p.photo&&<button onClick={()=>setPreview(p.photo)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>📷 View</button>}
+                {editable&&<button onClick={()=>openEdit(p)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Edit</button>}
+                {editable&&<button onClick={()=>del(p.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>Del</button>}
+              </div>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>}
+    {preview&&<Modal title="Receipt Photo" onClose={()=>setPreview(null)}>
+      <img src={preview} style={{width:"100%",borderRadius:8}}/>
+    </Modal>}
+    {showModal&&<Modal title={editing?"Edit Purchase":"New Purchase"} onClose={()=>setShowModal(false)} wide>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
+        <Field label="Document No"><input style={{...inp,background:"var(--surface2)",color:"var(--muted)"}} value={form.docNo||""} readOnly/></Field>
+        <Field label="Date"><input type="date" style={inp} value={form.date||""} onChange={e=>setForm({...form,date:e.target.value})}/></Field>
+        <Field label="Supplier / Vendor"><input style={inp} value={form.supplier||""} onChange={e=>setForm({...form,supplier:e.target.value})}/></Field>
+        <Field label="Category"><select style={inp} value={form.category||"Materials"} onChange={e=>setForm({...form,category:e.target.value})}>
+          {cats.map(c=><option key={c}>{c}</option>)}</select></Field>
+        <Field label="Amount (RM)"><input type="number" style={inp} value={form.amount||""} onChange={e=>setForm({...form,amount:e.target.value})}/></Field>
+        <Field label="Link to Session (optional)"><select style={inp} value={form.sessionId||""} onChange={e=>setForm({...form,sessionId:e.target.value})}>
+          <option value="">None</option>
+          {(db.sessions||[]).map(s=>{const sc=(db.schools||[]).find(x=>x.id===s.schoolId);const ct=(db.campTypes||[]).find(x=>x.id===s.campTypeId);
+            return <option key={s.id} value={s.id}>{fmtDate(s.date)} — {sc?.name||"?"} ({ct?.name||"?"})</option>;})}
+        </select></Field>
+      </div>
+      <Field label="Description"><input style={inp} value={form.description||""} onChange={e=>setForm({...form,description:e.target.value})}/></Field>
+      <Field label="Notes"><input style={inp} value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+      <Field label="Receipt / Invoice Photo">
+        <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{fontSize:12,marginBottom:6}}/>
+        {form.photo&&<img src={form.photo} style={{width:"100%",maxHeight:200,objectFit:"contain",borderRadius:6,marginTop:6}}/>}
+      </Field>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+        <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
+        <button onClick={save} style={btn("primary")}>Save</button>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ── ACCOUNTING: INVOICES ──
+function AcctInvoices({db,refresh,actor,onHome}){
+  const [showModal,setShowModal]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [form,setForm]=useState({});
+  const invoices=db.accountingInvoices||[];
+  const editable=canEdit(actor)||actor.role==="finance";
+  const blankLines=()=>[{id:uid(),description:"",qty:1,unitPrice:""}];
+  const openAdd=()=>{setForm({id:uid(),docNo:nextDocNo("INV"),date:new Date().toISOString().slice(0,10),dueDate:"",toName:"",toAddress:"",sessionId:"",lines:blankLines(),sstPct:0,notes:"",status:"Draft"});setEditing(null);setShowModal(true);};
+  const openEdit=(inv)=>{setForm({...inv,lines:inv.lines||blankLines()});setEditing(inv.id);setShowModal(true);};
+  const autoPopulate=()=>{
+    if(!form.sessionId){alert("Select a session first.");return;}
+    const sess=(db.sessions||[]).find(s=>s.id===form.sessionId);
+    const school=(db.schools||[]).find(s=>s.id===sess?.schoolId);
+    const ct=(db.campTypes||[]).find(c=>c.id===sess?.campTypeId);
+    const regs=(db.registrations||[]).filter(r=>r.sessionId===form.sessionId);
+    if(regs.length===0){alert("No registrations found for this session.");return;}
+    const lines=regs.map(r=>{const st=(db.students||[]).find(s=>s.id===r.studentId);
+      return {id:uid(),description:`Camp fee — ${st?.name||"Student"} (${ct?.name||""})`,qty:1,unitPrice:r.fee||ct?.fee||0};});
+    setForm({...form,toName:school?.name||"",toAddress:school?.address||"",lines});
+  };
+  const save=()=>{
+    const list=editing?invoices.map(i=>i.id===editing?form:i):[...invoices,form];
+    setDB({accountingInvoices:list});logAction(actor.role,actor.name,editing?"EDIT_INVOICE":"ADD_INVOICE",form.docNo);
+    refresh();setShowModal(false);
+  };
+  const del=(id)=>{if(!window.confirm("Delete invoice?"))return;
+    setDB({accountingInvoices:invoices.filter(i=>i.id!==id)});refresh();};
+  const doPrint=(inv)=>{
+    const html=buildDocHtml(db.settings,{docType:"INVOICE",docNo:inv.docNo,date:inv.date,
+      toName:inv.toName,toAddress:inv.toAddress,lines:inv.lines,sstPct:inv.sstPct,notes:inv.notes,
+      extraMeta:`<div style="font-size:12px;color:#555">Due: ${fmtDate(inv.dueDate)||"—"}</div>`,
+      footer:"Payment due within 30 days. Thank you for your business."});
+    printDoc(html);
+  };
+  const statuses=["Draft","Sent","Partially Paid","Paid","Overdue","Cancelled"];
+  return <div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Accounting","Invoices"]} onHome={onHome} title="Invoices"
+      action={editable&&<button onClick={openAdd} style={btn("primary")}>+ New Invoice</button>}/>
+    {invoices.length===0?<EmptyState icon="📄" text="No invoices yet."/>:
+    <div style={{display:"grid",gap:8}}>
+      {[...invoices].reverse().map(inv=>{
+        const total=calcDocTotal(inv.lines,inv.sstPct);
+        return <div key={inv.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 16px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <span style={{fontWeight:700}}>{inv.docNo}</span>
+                <DocStatusBadge status={inv.status}/>
+              </div>
+              <div style={{fontSize:13,marginTop:2}}>{inv.toName}</div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>Issued: {fmtDate(inv.date)} · Due: {fmtDate(inv.dueDate)||"—"} · {inv.lines?.length||0} items</div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+              <span style={{fontWeight:800,fontSize:15,color:"var(--accent)"}}>RM {total.toFixed(2)}</span>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>doPrint(inv)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>🖨 Print</button>
+                {editable&&<button onClick={()=>openEdit(inv)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Edit</button>}
+                {editable&&<button onClick={()=>del(inv.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>Del</button>}
+              </div>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>}
+    {showModal&&<Modal title={editing?"Edit Invoice":"New Invoice"} onClose={()=>setShowModal(false)} wide>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
+        <Field label="Invoice No"><input style={{...inp,background:"var(--surface2)",color:"var(--muted)"}} value={form.docNo||""} readOnly/></Field>
+        <Field label="Status"><select style={inp} value={form.status||"Draft"} onChange={e=>setForm({...form,status:e.target.value})}>
+          {statuses.map(s=><option key={s}>{s}</option>)}</select></Field>
+        <Field label="Invoice Date"><input type="date" style={inp} value={form.date||""} onChange={e=>setForm({...form,date:e.target.value})}/></Field>
+        <Field label="Due Date"><input type="date" style={inp} value={form.dueDate||""} onChange={e=>setForm({...form,dueDate:e.target.value})}/></Field>
+      </div>
+      <div style={{fontWeight:700,fontSize:12,color:"var(--muted)",margin:"10px 0 6px",textTransform:"uppercase"}}>Bill To</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
+        <Field label="Name / Company"><input style={inp} value={form.toName||""} onChange={e=>setForm({...form,toName:e.target.value})}/></Field>
+        <Field label="Link to Session (for auto-populate)">
+          <select style={inp} value={form.sessionId||""} onChange={e=>setForm({...form,sessionId:e.target.value})}>
+            <option value="">None</option>
+            {(db.sessions||[]).map(s=>{const sc=(db.schools||[]).find(x=>x.id===s.schoolId);const ct=(db.campTypes||[]).find(x=>x.id===s.campTypeId);
+              return <option key={s.id} value={s.id}>{fmtDate(s.date)} — {sc?.name||"?"} ({ct?.name||"?"})</option>;})}
+          </select>
+        </Field>
+      </div>
+      <Field label="Address"><textarea style={{...inp,minHeight:50}} value={form.toAddress||""} onChange={e=>setForm({...form,toAddress:e.target.value})}/></Field>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",margin:"10px 0 6px"}}>
+        <div style={{fontWeight:700,fontSize:12,color:"var(--muted)",textTransform:"uppercase"}}>Line Items</div>
+        <button onClick={autoPopulate} style={{...btn("ghost"),fontSize:11,padding:"4px 10px"}}>⚡ Auto-populate from Session</button>
+      </div>
+      <LineItemEditor lines={form.lines||[]} onChange={lines=>setForm({...form,lines})}/>
+      <SstField sstPct={form.sstPct||0} onChange={v=>setForm({...form,sstPct:v})} subtotal={calcSubtotal(form.lines||[])}/>
+      <Field label="Notes" hint="Appears on the printed invoice">
+        <textarea style={{...inp,minHeight:50}} value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/>
+      </Field>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+        <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
+        <button onClick={save} style={btn("primary")}>Save</button>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ── ACCOUNTING: BILLS ──
+function Bills({db,refresh,actor,onHome}){
+  const [showModal,setShowModal]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [form,setForm]=useState({});
+  const bills=db.bills||[];
+  const editable=canEdit(actor)||actor.role==="finance";
+  const blankLines=()=>[{id:uid(),description:"",qty:1,unitPrice:""}];
+  const openAdd=()=>{setForm({id:uid(),docNo:nextDocNo("BILL"),date:new Date().toISOString().slice(0,10),dueDate:"",toName:"",toAddress:"",lines:blankLines(),sstPct:0,notes:"",status:"Draft"});setEditing(null);setShowModal(true);};
+  const openEdit=(b)=>{setForm({...b,lines:b.lines||blankLines()});setEditing(b.id);setShowModal(true);};
+  const save=()=>{
+    const list=editing?bills.map(b=>b.id===editing?form:b):[...bills,form];
+    setDB({bills:list});logAction(actor.role,actor.name,editing?"EDIT_BILL":"ADD_BILL",form.docNo);
+    refresh();setShowModal(false);
+  };
+  const del=(id)=>{if(!window.confirm("Delete bill?"))return;setDB({bills:bills.filter(b=>b.id!==id)});refresh();};
+  const doPrint=(b)=>{
+    const html=buildDocHtml(db.settings,{docType:"BILL",docNo:b.docNo,date:b.date,
+      toName:b.toName,toAddress:b.toAddress,lines:b.lines,sstPct:b.sstPct,notes:b.notes,
+      extraMeta:`<div style="font-size:12px;color:#555">Due: ${fmtDate(b.dueDate)||"—"}</div>`,
+      footer:"Please settle by the due date. Thank you."});
+    printDoc(html);
+  };
+  const statuses=["Draft","Sent","Partially Paid","Paid","Overdue","Cancelled"];
+  return <div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Accounting","Bills"]} onHome={onHome} title="Bills"
+      action={editable&&<button onClick={openAdd} style={btn("primary")}>+ New Bill</button>}/>
+    {bills.length===0?<EmptyState icon="📋" text="No bills yet."/>:
+    <div style={{display:"grid",gap:8}}>
+      {[...bills].reverse().map(b=>{
+        const total=calcDocTotal(b.lines,b.sstPct);
+        return <div key={b.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 16px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <span style={{fontWeight:700}}>{b.docNo}</span>
+                <DocStatusBadge status={b.status}/>
+              </div>
+              <div style={{fontSize:13,marginTop:2}}>{b.toName}</div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>Issued: {fmtDate(b.date)} · Due: {fmtDate(b.dueDate)||"—"}</div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+              <span style={{fontWeight:800,fontSize:15,color:"var(--accent)"}}>RM {total.toFixed(2)}</span>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>doPrint(b)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>🖨 Print</button>
+                {editable&&<button onClick={()=>openEdit(b)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Edit</button>}
+                {editable&&<button onClick={()=>del(b.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>Del</button>}
+              </div>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>}
+    {showModal&&<Modal title={editing?"Edit Bill":"New Bill"} onClose={()=>setShowModal(false)} wide>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
+        <Field label="Bill No"><input style={{...inp,background:"var(--surface2)",color:"var(--muted)"}} value={form.docNo||""} readOnly/></Field>
+        <Field label="Status"><select style={inp} value={form.status||"Draft"} onChange={e=>setForm({...form,status:e.target.value})}>
+          {statuses.map(s=><option key={s}>{s}</option>)}</select></Field>
+        <Field label="Bill Date"><input type="date" style={inp} value={form.date||""} onChange={e=>setForm({...form,date:e.target.value})}/></Field>
+        <Field label="Due Date"><input type="date" style={inp} value={form.dueDate||""} onChange={e=>setForm({...form,dueDate:e.target.value})}/></Field>
+      </div>
+      <div style={{fontWeight:700,fontSize:12,color:"var(--muted)",margin:"10px 0 6px",textTransform:"uppercase"}}>Bill To</div>
+      <Field label="Name / Company"><input style={inp} value={form.toName||""} onChange={e=>setForm({...form,toName:e.target.value})}/></Field>
+      <Field label="Address"><textarea style={{...inp,minHeight:50}} value={form.toAddress||""} onChange={e=>setForm({...form,toAddress:e.target.value})}/></Field>
+      <div style={{fontWeight:700,fontSize:12,color:"var(--muted)",margin:"10px 0 6px",textTransform:"uppercase"}}>Line Items</div>
+      <LineItemEditor lines={form.lines||[]} onChange={lines=>setForm({...form,lines})}/>
+      <SstField sstPct={form.sstPct||0} onChange={v=>setForm({...form,sstPct:v})} subtotal={calcSubtotal(form.lines||[])}/>
+      <Field label="Notes"><textarea style={{...inp,minHeight:50}} value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+        <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
+        <button onClick={save} style={btn("primary")}>Save</button>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ── ACCOUNTING: PAYMENTS (INCOMING) ──
+function AcctPayments({db,refresh,actor,onHome}){
+  const [showModal,setShowModal]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [form,setForm]=useState({});
+  const payments=db.accountingPayments||[];
+  const editable=canEdit(actor)||actor.role==="finance";
+  const openAdd=()=>{setForm({id:uid(),docNo:nextDocNo("PAY"),date:new Date().toISOString().slice(0,10),payerName:"",amount:"",method:"Cash",reference:"",invoiceId:"",notes:""});setEditing(null);setShowModal(true);};
+  const openEdit=(p)=>{setForm({...p});setEditing(p.id);setShowModal(true);};
+  const save=()=>{
+    const isNew=!editing;
+    const list=editing?payments.map(p=>p.id===editing?form:p):[...payments,form];
+    const updates={accountingPayments:list};
+    // Auto-generate a receipt when a new payment is recorded
+    if(isNew){
+      const recNo=nextDocNo("REC");
+      const receipt={id:uid(),docNo:recNo,date:form.date,paymentId:form.id,payerName:form.payerName,amount:form.amount,method:form.method,invoiceId:form.invoiceId,notes:form.notes,status:"Issued"};
+      updates.receipts=[...(db.receipts||[]),receipt];
+    }
+    setDB(updates);logAction(actor.role,actor.name,editing?"EDIT_ACCT_PAYMENT":"ADD_ACCT_PAYMENT",form.docNo);
+    refresh();setShowModal(false);
+  };
+  const del=(id)=>{if(!window.confirm("Delete payment?"))return;setDB({accountingPayments:payments.filter(p=>p.id!==id)});refresh();};
+  const total=payments.reduce((a,p)=>a+parseFloat(p.amount||0),0);
+  return <div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Accounting","Payments"]} onHome={onHome} title="Payments Received"
+      action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Record Payment</button>}/>
+    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px",marginBottom:14}}>
+      <div style={{fontSize:11,color:"var(--muted)"}}>Total Received</div>
+      <div style={{fontWeight:800,fontSize:20,color:"var(--accent)"}}>RM {total.toFixed(2)}</div>
+    </div>
+    {payments.length===0?<EmptyState icon="💰" text="No payments recorded yet."/>:
+    <div style={{display:"grid",gap:8}}>
+      {[...payments].reverse().map(p=>{
+        const inv=(db.accountingInvoices||[]).find(i=>i.id===p.invoiceId);
+        return <div key={p.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 16px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontWeight:700}}>{p.docNo}</span><Badge label={p.method} color="blue"/></div>
+              <div style={{fontSize:13,marginTop:2}}>{p.payerName}</div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>{fmtDate(p.date)}{p.reference&&` · Ref: ${p.reference}`}{inv&&` · Invoice: ${inv.docNo}`}</div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+              <span style={{fontWeight:800,fontSize:15,color:"var(--accent)"}}>RM {parseFloat(p.amount||0).toFixed(2)}</span>
+              <div style={{display:"flex",gap:6}}>
+                {editable&&<button onClick={()=>openEdit(p)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Edit</button>}
+                {editable&&<button onClick={()=>del(p.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>Del</button>}
+              </div>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>}
+    {showModal&&<Modal title={editing?"Edit Payment":"Record Payment"} onClose={()=>setShowModal(false)} wide>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
+        <Field label="Payment Ref No"><input style={{...inp,background:"var(--surface2)",color:"var(--muted)"}} value={form.docNo||""} readOnly/></Field>
+        <Field label="Date"><input type="date" style={inp} value={form.date||""} onChange={e=>setForm({...form,date:e.target.value})}/></Field>
+        <Field label="Received From"><input style={inp} value={form.payerName||""} onChange={e=>setForm({...form,payerName:e.target.value})}/></Field>
+        <Field label="Amount (RM)"><input type="number" style={inp} value={form.amount||""} onChange={e=>setForm({...form,amount:e.target.value})}/></Field>
+        <Field label="Payment Method"><select style={inp} value={form.method||"Cash"} onChange={e=>setForm({...form,method:e.target.value})}>
+          {PAYMENT_METHODS.map(m=><option key={m}>{m}</option>)}</select></Field>
+        <Field label="Reference No (cheque/transfer)"><input style={inp} value={form.reference||""} onChange={e=>setForm({...form,reference:e.target.value})}/></Field>
+      </div>
+      <Field label="Link to Invoice (optional)"><select style={inp} value={form.invoiceId||""} onChange={e=>setForm({...form,invoiceId:e.target.value})}>
+        <option value="">None</option>
+        {(db.accountingInvoices||[]).map(i=><option key={i.id} value={i.id}>{i.docNo} — {i.toName} (RM {calcDocTotal(i.lines,i.sstPct).toFixed(2)})</option>)}
+      </select></Field>
+      <Field label="Notes"><textarea style={{...inp,minHeight:50}} value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+      {!editing&&<div style={{fontSize:12,color:"var(--muted)",marginTop:6}}>💡 A receipt will be automatically generated when this payment is saved.</div>}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+        <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
+        <button onClick={save} style={btn("primary")}>Save</button>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ── ACCOUNTING: RECEIPTS ──
+function Receipts({db,refresh,actor,onHome}){
+  const receipts=db.receipts||[];
+  const doPrint=(r)=>{
+    const inv=r.invoiceId?(db.accountingInvoices||[]).find(i=>i.id===r.invoiceId):null;
+    const html=buildDocHtml(db.settings,{docType:"OFFICIAL RECEIPT",docNo:r.docNo,date:r.date,
+      toName:r.payerName,toAddress:"",
+      lines:[{id:"1",description:`Payment received — ${r.method}${r.notes?` (${r.notes})`:""}`+(inv?` — Ref Invoice: ${inv.docNo}`:""),qty:1,unitPrice:r.amount}],
+      sstPct:0,notes:"",footer:"This is an official receipt. Please retain for your records."});
+    printDoc(html);
+  };
+  const total=receipts.reduce((a,r)=>a+parseFloat(r.amount||0),0);
+  return <div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Accounting","Receipts"]} onHome={onHome} title="Receipts"/>
+    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px",marginBottom:14,fontSize:12,color:"var(--muted)"}}>
+      Receipts are auto-generated when a Payment is recorded. Total issued: <b>RM {total.toFixed(2)}</b>
+    </div>
+    {receipts.length===0?<EmptyState icon="🧮" text="No receipts yet — receipts are created automatically when you record a payment."/>:
+    <div style={{display:"grid",gap:8}}>
+      {[...receipts].reverse().map(r=>{
+        const inv=r.invoiceId?(db.accountingInvoices||[]).find(i=>i.id===r.invoiceId):null;
+        return <div key={r.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 16px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontWeight:700}}>{r.docNo}</span><DocStatusBadge status={r.status}/><Badge label={r.method} color="blue"/></div>
+              <div style={{fontSize:13,marginTop:2}}>{r.payerName}</div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>{fmtDate(r.date)}{inv&&` · Invoice: ${inv.docNo}`}</div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+              <span style={{fontWeight:800,fontSize:15,color:"var(--accent)"}}>RM {parseFloat(r.amount||0).toFixed(2)}</span>
+              <button onClick={()=>doPrint(r)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>🖨 Print</button>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>}
+  </div>;
+}
+
+// ── ACCOUNTING: CREDIT NOTES ──
+function CreditNotes({db,refresh,actor,onHome}){
+  const [showModal,setShowModal]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [form,setForm]=useState({});
+  const creditNotes=db.creditNotes||[];
+  const editable=canEdit(actor)||actor.role==="finance";
+  const blankLines=()=>[{id:uid(),description:"",qty:1,unitPrice:""}];
+  const openAdd=()=>{setForm({id:uid(),docNo:nextDocNo("CN"),date:new Date().toISOString().slice(0,10),toName:"",invoiceId:"",lines:blankLines(),sstPct:0,reason:"",notes:"",status:"Draft"});setEditing(null);setShowModal(true);};
+  const openEdit=(cn)=>{setForm({...cn,lines:cn.lines||blankLines()});setEditing(cn.id);setShowModal(true);};
+  const save=()=>{
+    const list=editing?creditNotes.map(c=>c.id===editing?form:c):[...creditNotes,form];
+    setDB({creditNotes:list});logAction(actor.role,actor.name,editing?"EDIT_CREDIT_NOTE":"ADD_CREDIT_NOTE",form.docNo);
+    refresh();setShowModal(false);
+  };
+  const del=(id)=>{if(!window.confirm("Delete credit note?"))return;setDB({creditNotes:creditNotes.filter(c=>c.id!==id)});refresh();};
+  const doPrint=(cn)=>{
+    const inv=cn.invoiceId?(db.accountingInvoices||[]).find(i=>i.id===cn.invoiceId):null;
+    const html=buildDocHtml(db.settings,{docType:"CREDIT NOTE",docNo:cn.docNo,date:cn.date,
+      toName:cn.toName,toAddress:"",lines:cn.lines,sstPct:cn.sstPct,notes:cn.notes,
+      extraMeta:inv?`<div style="font-size:12px;color:#555">Re: Invoice ${inv.docNo}</div>`:"",
+      footer:cn.reason?`Reason: ${cn.reason}`:"Credit note issued."});
+    printDoc(html);
+  };
+  const statuses=["Draft","Issued","Applied","Cancelled"];
+  return <div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Accounting","Credit Notes"]} onHome={onHome} title="Credit Notes"
+      action={editable&&<button onClick={openAdd} style={btn("primary")}>+ New Credit Note</button>}/>
+    {creditNotes.length===0?<EmptyState icon="🔄" text="No credit notes yet."/>:
+    <div style={{display:"grid",gap:8}}>
+      {[...creditNotes].reverse().map(cn=>{
+        const total=calcDocTotal(cn.lines,cn.sstPct);
+        const inv=cn.invoiceId?(db.accountingInvoices||[]).find(i=>i.id===cn.invoiceId):null;
+        return <div key={cn.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 16px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontWeight:700}}>{cn.docNo}</span><DocStatusBadge status={cn.status}/></div>
+              <div style={{fontSize:13,marginTop:2}}>{cn.toName}</div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>{fmtDate(cn.date)}{inv&&` · Re: ${inv.docNo}`}{cn.reason&&` · ${cn.reason}`}</div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+              <span style={{fontWeight:800,fontSize:15,color:"#dc2626"}}>−RM {total.toFixed(2)}</span>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>doPrint(cn)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>🖨 Print</button>
+                {editable&&<button onClick={()=>openEdit(cn)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Edit</button>}
+                {editable&&<button onClick={()=>del(cn.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>Del</button>}
+              </div>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>}
+    {showModal&&<Modal title={editing?"Edit Credit Note":"New Credit Note"} onClose={()=>setShowModal(false)} wide>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
+        <Field label="Credit Note No"><input style={{...inp,background:"var(--surface2)",color:"var(--muted)"}} value={form.docNo||""} readOnly/></Field>
+        <Field label="Status"><select style={inp} value={form.status||"Draft"} onChange={e=>setForm({...form,status:e.target.value})}>
+          {statuses.map(s=><option key={s}>{s}</option>)}</select></Field>
+        <Field label="Date"><input type="date" style={inp} value={form.date||""} onChange={e=>setForm({...form,date:e.target.value})}/></Field>
+        <Field label="Link to Original Invoice"><select style={inp} value={form.invoiceId||""} onChange={e=>{
+          const inv=(db.accountingInvoices||[]).find(i=>i.id===e.target.value);
+          setForm({...form,invoiceId:e.target.value,toName:inv?.toName||form.toName});
+        }}>
+          <option value="">None</option>
+          {(db.accountingInvoices||[]).map(i=><option key={i.id} value={i.id}>{i.docNo} — {i.toName}</option>)}
+        </select></Field>
+      </div>
+      <Field label="Issue To"><input style={inp} value={form.toName||""} onChange={e=>setForm({...form,toName:e.target.value})}/></Field>
+      <Field label="Reason for Credit Note"><input style={inp} value={form.reason||""} onChange={e=>setForm({...form,reason:e.target.value})}/></Field>
+      <div style={{fontWeight:700,fontSize:12,color:"var(--muted)",margin:"10px 0 6px",textTransform:"uppercase"}}>Credit Line Items</div>
+      <LineItemEditor lines={form.lines||[]} onChange={lines=>setForm({...form,lines})}/>
+      <SstField sstPct={form.sstPct||0} onChange={v=>setForm({...form,sstPct:v})} subtotal={calcSubtotal(form.lines||[])}/>
+      <Field label="Notes"><textarea style={{...inp,minHeight:50}} value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+        <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
+        <button onClick={save} style={btn("primary")}>Save</button>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ── ACCOUNTING: REFUNDS ──
+function Refunds({db,refresh,actor,onHome}){
+  const [showModal,setShowModal]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [form,setForm]=useState({});
+  const refunds=db.refunds||[];
+  const editable=canEdit(actor)||actor.role==="finance";
+  const openAdd=()=>{setForm({id:uid(),docNo:nextDocNo("REF"),date:new Date().toISOString().slice(0,10),toName:"",amount:"",method:"Bank Transfer",reference:"",paymentId:"",creditNoteId:"",reason:"",notes:""});setEditing(null);setShowModal(true);};
+  const openEdit=(r)=>{setForm({...r});setEditing(r.id);setShowModal(true);};
+  const save=()=>{
+    const list=editing?refunds.map(r=>r.id===editing?form:r):[...refunds,form];
+    setDB({refunds:list});logAction(actor.role,actor.name,editing?"EDIT_REFUND":"ADD_REFUND",form.docNo);
+    refresh();setShowModal(false);
+  };
+  const del=(id)=>{if(!window.confirm("Delete refund?"))return;setDB({refunds:refunds.filter(r=>r.id!==id)});refresh();};
+  const doPrint=(r)=>{
+    const cn=r.creditNoteId?(db.creditNotes||[]).find(c=>c.id===r.creditNoteId):null;
+    const pmt=r.paymentId?(db.accountingPayments||[]).find(p=>p.id===r.paymentId):null;
+    const html=buildDocHtml(db.settings,{docType:"REFUND VOUCHER",docNo:r.docNo,date:r.date,
+      toName:r.toName,toAddress:"",
+      lines:[{id:"1",description:`Refund via ${r.method}${r.reference?` (Ref: ${r.reference})`:""}`+(cn?` — Credit Note: ${cn.docNo}`:"")+(pmt?` — Payment: ${pmt.docNo}`:""),qty:1,unitPrice:r.amount}],
+      sstPct:0,notes:r.notes,footer:r.reason?`Reason: ${r.reason}`:"Refund processed."});
+    printDoc(html);
+  };
+  const total=refunds.reduce((a,r)=>a+parseFloat(r.amount||0),0);
+  return <div>
+    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Accounting","Refunds"]} onHome={onHome} title="Refunds"
+      action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Record Refund</button>}/>
+    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px",marginBottom:14}}>
+      <div style={{fontSize:11,color:"var(--muted)"}}>Total Refunded</div>
+      <div style={{fontWeight:800,fontSize:20,color:"#dc2626"}}>RM {total.toFixed(2)}</div>
+    </div>
+    {refunds.length===0?<EmptyState icon="↩️" text="No refunds yet."/>:
+    <div style={{display:"grid",gap:8}}>
+      {[...refunds].reverse().map(r=>{
+        const cn=r.creditNoteId?(db.creditNotes||[]).find(c=>c.id===r.creditNoteId):null;
+        return <div key={r.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 16px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontWeight:700}}>{r.docNo}</span><Badge label={r.method} color="blue"/></div>
+              <div style={{fontSize:13,marginTop:2}}>{r.toName}</div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>{fmtDate(r.date)}{cn&&` · CN: ${cn.docNo}`}{r.reason&&` · ${r.reason}`}</div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+              <span style={{fontWeight:800,fontSize:15,color:"#dc2626"}}>−RM {parseFloat(r.amount||0).toFixed(2)}</span>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>doPrint(r)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>🖨 Print</button>
+                {editable&&<button onClick={()=>openEdit(r)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Edit</button>}
+                {editable&&<button onClick={()=>del(r.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>Del</button>}
+              </div>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>}
+    {showModal&&<Modal title={editing?"Edit Refund":"Record Refund"} onClose={()=>setShowModal(false)} wide>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
+        <Field label="Refund Ref No"><input style={{...inp,background:"var(--surface2)",color:"var(--muted)"}} value={form.docNo||""} readOnly/></Field>
+        <Field label="Date"><input type="date" style={inp} value={form.date||""} onChange={e=>setForm({...form,date:e.target.value})}/></Field>
+        <Field label="Refund To"><input style={inp} value={form.toName||""} onChange={e=>setForm({...form,toName:e.target.value})}/></Field>
+        <Field label="Amount (RM)"><input type="number" style={inp} value={form.amount||""} onChange={e=>setForm({...form,amount:e.target.value})}/></Field>
+        <Field label="Refund Method"><select style={inp} value={form.method||"Bank Transfer"} onChange={e=>setForm({...form,method:e.target.value})}>
+          {PAYMENT_METHODS.map(m=><option key={m}>{m}</option>)}</select></Field>
+        <Field label="Reference No"><input style={inp} value={form.reference||""} onChange={e=>setForm({...form,reference:e.target.value})}/></Field>
+      </div>
+      <Field label="Link to Credit Note (optional)"><select style={inp} value={form.creditNoteId||""} onChange={e=>setForm({...form,creditNoteId:e.target.value})}>
+        <option value="">None</option>
+        {(db.creditNotes||[]).map(c=><option key={c.id} value={c.id}>{c.docNo} — {c.toName}</option>)}
+      </select></Field>
+      <Field label="Link to Original Payment (optional)"><select style={inp} value={form.paymentId||""} onChange={e=>setForm({...form,paymentId:e.target.value})}>
+        <option value="">None</option>
+        {(db.accountingPayments||[]).map(p=><option key={p.id} value={p.id}>{p.docNo} — {p.payerName} (RM {parseFloat(p.amount||0).toFixed(2)})</option>)}
+      </select></Field>
+      <Field label="Reason"><input style={inp} value={form.reason||""} onChange={e=>setForm({...form,reason:e.target.value})}/></Field>
+      <Field label="Notes"><textarea style={{...inp,minHeight:50}} value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+        <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
+        <button onClick={save} style={btn("primary")}>Save</button>
+      </div>
+    </Modal>}
+  </div>;
+}
+
 // ── MAIN APP ──
 const MENU=[
   {key:"dashboard",label:"Dashboard",icon:"🏠",roles:["admin","finance","user","viewer"]},
@@ -2095,6 +2769,14 @@ const MENU=[
   {key:"auditlog",label:"Audit Log",icon:"📜",roles:["admin","viewer"]},
   {key:"settings",label:"Settings",icon:"⚙️",roles:["admin"]},
   {key:"manageUsers",label:"Manage Users",icon:"🔐",roles:["admin"]},
+  {key:"acct-divider",label:"── ACCOUNTING ──",icon:"",roles:["admin","finance"],divider:true},
+  {key:"purchases",label:"Purchases",icon:"🧾",roles:["admin","finance","viewer"]},
+  {key:"acctInvoices",label:"Invoices",icon:"📄",roles:["admin","finance","viewer"]},
+  {key:"bills",label:"Bills",icon:"📋",roles:["admin","finance","viewer"]},
+  {key:"acctPayments",label:"Payments",icon:"💰",roles:["admin","finance","viewer"]},
+  {key:"receipts",label:"Receipts",icon:"🧮",roles:["admin","finance","viewer"]},
+  {key:"creditNotes",label:"Credit Notes",icon:"🔄",roles:["admin","finance","viewer"]},
+  {key:"refunds",label:"Refunds",icon:"↩️",roles:["admin","finance","viewer"]},
 ];
 
 function App(){
@@ -2115,7 +2797,7 @@ function App(){
 
   if(!user)return <LoginScreen onLogin={login} authReady={authReady}/>;
 
-  const canAccess=(key)=>{const m=MENU.find(m=>m.key===key);return m?.roles.includes(user.role)||false;};
+  const canAccess=(key)=>{const m=MENU.find(m=>m.key===key);return !m?.divider&&(m?.roles.includes(user.role)||false);};
   const navigate=(key,filter)=>{if(canAccess(key)){setPage(key);setPageFilter(filter||null);setSidebarOpen(false);}};
   const goBackToDashboard=()=>navigate("dashboard");
 
@@ -2128,9 +2810,11 @@ function App(){
         <div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>Xperience Camp</div>
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"6px 0"}}>
-        {MENU.filter(m=>m.roles.includes(user.role)).map(m=><button key={m.key} onClick={()=>navigate(m.key)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"9px 14px",border:"none",background:page===m.key?"var(--surface2)":"transparent",cursor:"pointer",fontSize:13,fontWeight:page===m.key?700:400,color:page===m.key?"var(--accent)":"var(--text)",textAlign:"left",borderLeft:`3px solid ${page===m.key?"var(--accent)":"transparent"}`}}>
-          <span>{m.icon}</span>{m.label}
-        </button>)}
+        {MENU.filter(m=>m.roles.includes(user.role)).map(m=>m.divider
+          ? <div key={m.key} style={{padding:"10px 14px 4px",fontSize:10,fontWeight:700,color:"var(--muted)",letterSpacing:"0.08em",borderTop:"1px solid var(--border)",marginTop:6}}>{m.label}</div>
+          : <button key={m.key} onClick={()=>navigate(m.key)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"9px 14px",border:"none",background:page===m.key?"var(--surface2)":"transparent",cursor:"pointer",fontSize:13,fontWeight:page===m.key?700:400,color:page===m.key?"var(--accent)":"var(--text)",textAlign:"left",borderLeft:`3px solid ${page===m.key?"var(--accent)":"transparent"}`}}>
+            <span>{m.icon}</span>{m.label}
+          </button>)}
       </div>
       <div style={{padding:"12px 14px",borderTop:"1px solid var(--border)"}}>
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
@@ -2165,6 +2849,13 @@ function App(){
         {page==="auditlog"&&<AuditLog db={db} onHome={goBackToDashboard}/>}
         {page==="settings"&&<Settings db={db} refresh={refresh} onHome={goBackToDashboard}/>}
         {page==="manageUsers"&&<ManageUsers actor={user} onHome={goBackToDashboard}/>}
+        {page==="purchases"&&<Purchases db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="acctInvoices"&&<AcctInvoices db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="bills"&&<Bills db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="acctPayments"&&<AcctPayments db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="receipts"&&<Receipts db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="creditNotes"&&<CreditNotes db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="refunds"&&<Refunds db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
       </div>
     </div>
   </div>;
