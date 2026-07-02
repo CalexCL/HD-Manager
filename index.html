@@ -67,7 +67,7 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.07.01-14:30";
+const APP_VERSION = "HD System v.2026.07.02-09:45";
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -3041,7 +3041,26 @@ function App(){
           <RoleBadge role={user.role}/>
         </div>
         <button onClick={logout} style={{...btn("danger"),width:"100%",padding:"8px 12px",fontSize:12}}>🚪 Logout</button>
-        <div style={{fontSize:9,color:"var(--muted)",marginTop:8,textAlign:"center"}}>{APP_VERSION}</div>
+        <div style={{borderTop:"1px solid var(--border)",marginTop:10,paddingTop:10,display:"flex",flexDirection:"column",gap:6}}>
+          {/* User Manual — visible to ALL roles */}
+          <a href="https://github.com/calexcl/HD-Manager/raw/main/HD_Manager_User_Manual.docx"
+            target="_blank" rel="noopener noreferrer"
+            style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"var(--accent)",textDecoration:"none",padding:"4px 0"}}>
+            📖 <span>User Manual (EN/中文)</span>
+          </a>
+          {/* GitHub links — Admin only */}
+          {user.role==="admin"&&<>
+            <a href="https://calexcl.github.io/HD-Manager/" target="_blank" rel="noopener noreferrer"
+              style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"var(--muted)",textDecoration:"none",padding:"4px 0"}}>
+              🌐 <span>Open App (GitHub Pages)</span>
+            </a>
+            <a href="https://github.com/calexcl/HD-Manager" target="_blank" rel="noopener noreferrer"
+              style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"var(--muted)",textDecoration:"none",padding:"4px 0"}}>
+              📦 <span>GitHub Repository</span>
+            </a>
+          </>}
+        </div>
+        <div style={{fontSize:9,color:"var(--muted)",marginTop:6,textAlign:"center"}}>{APP_VERSION}</div>
       </div>
     </div>
     {/* Main */}
