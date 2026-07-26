@@ -90,7 +90,7 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.07.26-22:00";
+const APP_VERSION = "HD System v.2026.07.27-07:00";
 // ── DARK NEON THEME CONSTANTS ──
 const inp={width:"100%",padding:"9px 12px",border:"1px solid var(--border2)",borderRadius:8,background:"var(--surface2)",color:"var(--text)",fontSize:15,boxSizing:"border-box",outline:"none"};
 const btn=(v="primary")=>({padding:"9px 18px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:600,fontSize:14,transition:"all 0.15s",
@@ -1056,23 +1056,65 @@ function Students({db,refresh,school,onBack,actor,onHome}){
   const [editing,setEditing]=useState(null);
   const [form,setForm]=useState({});
   const [revealBank,setRevealBank]=useState({});
-  // ── FILTERS ──
+
+  // ── FILTERS & SORT ──
   const [filterSchool,setFilterSchool]=useState(school?.id||"");
-  const [filterClass,setFilterClass]=useState("");
+  const [filterYear,setFilterYear]=useState("");      // "1","2",...,"6","other","" = all
+  const [filterClassName,setFilterClassName]=useState(""); // specific class name within year
   const [filterGender,setFilterGender]=useState("");
   const [filterAgeMin,setFilterAgeMin]=useState("");
   const [filterAgeMax,setFilterAgeMax]=useState("");
   const [filterSize,setFilterSize]=useState("");
   const [filterCampType,setFilterCampType]=useState("");
+  const [sortBy,setSortBy]=useState("added");         // "nameAZ","nameZA","classAZ","classZA","ageAsc","ageDesc","added"
   const [showFilters,setShowFilters]=useState(false);
-  const clearFilters=()=>{setFilterSchool(school?.id||"");setFilterClass("");setFilterGender("");setFilterAgeMin("");setFilterAgeMax("");setFilterSize("");setFilterCampType("");};
-  const activeFilterCount=[filterClass,filterGender,filterAgeMin,filterAgeMax,filterSize,filterCampType,(!school&&filterSchool)?"y":""].filter(Boolean).length;
+
+  const clearFilters=()=>{
+    setFilterSchool(school?.id||"");setFilterYear("");setFilterClassName("");
+    setFilterGender("");setFilterAgeMin("");setFilterAgeMax("");
+    setFilterSize("");setFilterCampType("");setSortBy("added");
+  };
 
   const allStudents=db.students||[];
   const baseStudents=school?allStudents.filter(s=>s.schoolId===school.id):allStudents;
-  const students=baseStudents.filter(s=>{
+
+  // ── YEAR/CLASS PARSING ──
+  // Extract year prefix (leading digit 1-6) from a class name string.
+  // e.g. "3 Amanah" → "3", "3A" → "3", "Genius" → "other"
+  const getYear=(className)=>{
+    if(!className)return "other";
+    const m=String(className).match(/^([1-6])\s*[A-Za-z\s]/);
+    if(m)return m[1];
+    const d=String(className).match(/^([1-6])$/);
+    if(d)return d[1];
+    return "other";
+  };
+  const getClassSuffix=(className)=>{
+    if(!className)return "";
+    // strip leading digit to get the name part: "3 Amanah" → "Amanah", "3A" → "A"
+    return String(className).replace(/^[1-6]\s*/,"").trim()||className;
+  };
+
+  // Which years actually exist in this student pool?
+  const existingYears=[...new Set(baseStudents.map(s=>getYear(s.className)))].sort((a,b)=>{
+    if(a==="other")return 1;if(b==="other")return -1;return parseInt(a)-parseInt(b);
+  });
+
+  // Class names within the selected year (for secondary row)
+  const classesInYear=filterYear
+    ? [...new Set(
+        baseStudents
+          .filter(s=>getYear(s.className)===filterYear)
+          .map(s=>s.className)
+          .filter(Boolean)
+      )].sort()
+    : [];
+
+  // ── FILTERING ──
+  const baseFiltered=baseStudents.filter(s=>{
     if(filterSchool&&!school&&s.schoolId!==filterSchool)return false;
-    if(filterClass&&!s.className?.toLowerCase().includes(filterClass.toLowerCase()))return false;
+    if(filterYear&&getYear(s.className)!==filterYear)return false;
+    if(filterClassName&&s.className!==filterClassName)return false;
     if(filterGender&&s.gender!==filterGender)return false;
     const age=s.dob?calcAge(s.dob):null;
     if(filterAgeMin&&(age===null||age<parseInt(filterAgeMin)))return false;
@@ -1085,10 +1127,53 @@ function Students({db,refresh,school,onBack,actor,onHome}){
     }
     return true;
   });
-  const uniqueClasses=[...new Set(baseStudents.map(s=>s.className).filter(Boolean))].sort();
+
+  // ── SORTING ──
+  const students=[...baseFiltered].sort((a,b)=>{
+    switch(sortBy){
+      case "nameAZ": return (a.name||"").localeCompare(b.name||"");
+      case "nameZA": return (b.name||"").localeCompare(a.name||"");
+      case "classAZ": return (a.className||"").localeCompare(b.className||"");
+      case "classZA": return (b.className||"").localeCompare(a.className||"");
+      case "ageAsc": {
+        const aa=a.dob?calcAge(a.dob):999,ba=b.dob?calcAge(b.dob):999;
+        return aa-ba;
+      }
+      case "ageDesc": {
+        const aa=a.dob?calcAge(a.dob):0,ba=b.dob?calcAge(b.dob):0;
+        return ba-aa;
+      }
+      default: return 0; // "added" = insertion order
+    }
+  });
+
+  // ── ACTIVE FILTER SUMMARY ──
+  const summaryParts=[];
+  if(filterYear)summaryParts.push(filterYear==="other"?"Other classes":`Year ${filterYear}`);
+  if(filterClassName)summaryParts.push(filterClassName);
+  if(filterGender)summaryParts.push(filterGender);
+  if(filterAgeMin&&filterAgeMax)summaryParts.push(`Age ${filterAgeMin}–${filterAgeMax}`);
+  else if(filterAgeMin)summaryParts.push(`Age ≥${filterAgeMin}`);
+  else if(filterAgeMax)summaryParts.push(`Age ≤${filterAgeMax}`);
+  if(filterSize)summaryParts.push(filterSize);
+  if(filterCampType){const ct=(db.campTypes||[]).find(c=>c.id===filterCampType);if(ct)summaryParts.push(ct.name);}
+  summaryParts.push(`${students.length} student${students.length!==1?"s":""}`);
+  const summaryLine=summaryParts.join(" · ");
+
+  const activeFilterCount=[filterYear,filterClassName,filterGender,filterAgeMin,filterAgeMax,filterSize,filterCampType,(!school&&filterSchool)?"y":""].filter(Boolean).length;
+
   const allSchools=db.schools||[];
   const canSeeBank=actor.role==="admin"||actor.role==="finance";
   const sizes=db.tshirtSizes||[];
+
+  // Chip button style
+  const chip=(active)=>({
+    padding:"5px 12px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:active?700:400,
+    background:active?"var(--accent)":"var(--surface2)",
+    color:active?"#000":"#ffffff",
+    transition:"all 0.15s",whiteSpace:"nowrap",
+  });
+
   const openAdd=()=>{setForm({id:uid(),schoolId:school?.id||"",name:"",nameChinese:"",gender:"",ic:"",dob:"",address:"",className:"",phone:"",
     parentName:"",parentRelation:"Mother",parentPhone:"",parentPhoneExtra:[],
     emergencyName:"",emergencyRelation:"Guardian",emergencyPhone:"",emergencyPhoneExtra:[],
@@ -1101,46 +1186,105 @@ function Students({db,refresh,school,onBack,actor,onHome}){
   const addExtraPhone=(field)=>setForm({...form,[field]:[...(form[field]||[]),""]});
   const updateExtraPhone=(field,idx,val)=>{const arr=[...(form[field]||[])];arr[idx]=val;setForm({...form,[field]:arr});};
   const removeExtraPhone=(field,idx)=>setForm({...form,[field]:(form[field]||[]).filter((_,i)=>i!==idx)});
+
   return <div>
     <PageHeader crumbs={[{label:"Dashboard",nav:onHome},school?"Schools":"Students",school?school.name:null].filter(Boolean)} onBack={onBack} onHome={onHome} title={school?`Students — ${school.name}`:"All Students"} action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Add Student</button>}/>
-    {/* Filter bar */}
-    <div style={{marginBottom:12}}>
-      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:showFilters?10:0}}>
-        <button onClick={()=>setShowFilters(!showFilters)} style={{...btn("ghost"),fontSize:12,padding:"6px 12px",display:"flex",alignItems:"center",gap:5,border:"1px solid var(--border2)"}}>
-          ▼ Filters {activeFilterCount>0&&<span style={{background:"var(--accent)",color:"#000",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{activeFilterCount}</span>}
+
+    {/* ── SMART FILTER BAR ── */}
+    <div style={{marginBottom:14}}>
+
+      {/* Row 1: Year chips + Sort + Filters toggle */}
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+        {/* Year chips — only years that exist */}
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
+          <button style={chip(!filterYear)} onClick={()=>{setFilterYear("");setFilterClassName("");}}>All</button>
+          {existingYears.map(y=><button key={y} style={chip(filterYear===y)}
+            onClick={()=>{setFilterYear(filterYear===y?"":y);setFilterClassName("");}}>
+            {y==="other"?"Other":`${y}x`}
+          </button>)}
+        </div>
+        <div style={{width:1,height:20,background:"var(--border2)",margin:"0 4px"}}/>
+        {/* Sort selector */}
+        <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
+          style={{...inp,width:"auto",fontSize:12,padding:"5px 10px",color:"#ffffff"}}>
+          <option value="added">Sort: Recently Added</option>
+          <option value="nameAZ">Name A → Z</option>
+          <option value="nameZA">Name Z → A</option>
+          <option value="classAZ">Class A → Z</option>
+          <option value="classZA">Class Z → A</option>
+          <option value="ageAsc">Age: Youngest first</option>
+          <option value="ageDesc">Age: Oldest first</option>
+        </select>
+        {/* More filters toggle */}
+        <button onClick={()=>setShowFilters(!showFilters)}
+          style={{...chip(showFilters||(activeFilterCount-[filterYear,filterClassName].filter(Boolean).length)>0),padding:"5px 10px",fontSize:12}}>
+          ⚙ More {(activeFilterCount-[filterYear,filterClassName].filter(Boolean).length)>0&&
+            <span style={{background:"#000",color:"var(--accent)",borderRadius:"50%",width:14,height:14,fontSize:9,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",marginLeft:4}}>
+              {activeFilterCount-[filterYear,filterClassName].filter(Boolean).length}
+            </span>}
         </button>
-        <div style={{fontSize:12,color:"var(--muted)"}}>{students.length} of {baseStudents.length} student{baseStudents.length!==1?"s":""}</div>
-        {activeFilterCount>0&&<button onClick={clearFilters} style={{fontSize:11,color:"var(--red)",background:"none",border:"none",cursor:"pointer",padding:"2px 6px"}}>Clear all</button>}
+        {activeFilterCount>0&&<button onClick={clearFilters}
+          style={{fontSize:11,color:"#ef4444",background:"none",border:"none",cursor:"pointer",padding:"2px 4px",flexShrink:0}}>
+          ✕ Clear all
+        </button>}
       </div>
-      {showFilters&&<div style={{background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:10,padding:"12px 14px",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>
-        {!school&&<div><div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>SCHOOL</div>
+
+      {/* Row 2: Class name chips — only when a year is selected AND it has multiple classes */}
+      {filterYear&&classesInYear.length>1&&<div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:6,paddingLeft:2}}>
+        <span style={{fontSize:10,color:"var(--muted)",fontWeight:700,alignSelf:"center",marginRight:2}}>CLASS:</span>
+        <button style={{...chip(!filterClassName),fontSize:11,padding:"3px 10px"}}
+          onClick={()=>setFilterClassName("")}>
+          All Year {filterYear}
+        </button>
+        {classesInYear.map(cn=><button key={cn} style={{...chip(filterClassName===cn),fontSize:11,padding:"3px 10px"}}
+          onClick={()=>setFilterClassName(filterClassName===cn?"":cn)}>
+          {getClassSuffix(cn)||cn}
+        </button>)}
+      </div>}
+
+      {/* Row 3: More filters panel — gender, age, size, camp */}
+      {showFilters&&<div style={{background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:10,padding:"12px 14px",
+        display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))",gap:10,marginBottom:6}}>
+        {!school&&<div>
+          <div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>SCHOOL</div>
           <select style={{...inp,fontSize:12}} value={filterSchool} onChange={e=>setFilterSchool(e.target.value)}>
             <option value="">All Schools</option>{allSchools.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
-          </select></div>}
-        <div><div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>CLASS</div>
-          <select style={{...inp,fontSize:12}} value={filterClass} onChange={e=>setFilterClass(e.target.value)}>
-            <option value="">All Classes</option>{uniqueClasses.map(c=><option key={c}>{c}</option>)}
-          </select></div>
-        <div><div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>GENDER</div>
+          </select>
+        </div>}
+        <div>
+          <div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>GENDER</div>
           <select style={{...inp,fontSize:12}} value={filterGender} onChange={e=>setFilterGender(e.target.value)}>
             <option value="">Any</option><option>Male</option><option>Female</option>
-          </select></div>
-        <div><div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>AGE MIN</div>
-          <input type="number" style={{...inp,fontSize:12}} value={filterAgeMin} onChange={e=>setFilterAgeMin(e.target.value)} placeholder="e.g. 7"/></div>
-        <div><div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>AGE MAX</div>
-          <input type="number" style={{...inp,fontSize:12}} value={filterAgeMax} onChange={e=>setFilterAgeMax(e.target.value)} placeholder="e.g. 12"/></div>
-        <div><div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>T-SHIRT SIZE</div>
+          </select>
+        </div>
+        <div>
+          <div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>AGE (MIN)</div>
+          <input type="number" style={{...inp,fontSize:12}} value={filterAgeMin} onChange={e=>setFilterAgeMin(e.target.value)} placeholder="e.g. 7"/>
+        </div>
+        <div>
+          <div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>AGE (MAX)</div>
+          <input type="number" style={{...inp,fontSize:12}} value={filterAgeMax} onChange={e=>setFilterAgeMax(e.target.value)} placeholder="e.g. 12"/>
+        </div>
+        <div>
+          <div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>T-SHIRT SIZE</div>
           <select style={{...inp,fontSize:12}} value={filterSize} onChange={e=>setFilterSize(e.target.value)}>
             <option value="">Any Size</option>{sizes.map(s=><option key={s.id} value={s.label}>{s.label} ({s.chest})</option>)}
-          </select></div>
-        <div><div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>ATTENDED CAMP</div>
+          </select>
+        </div>
+        <div>
+          <div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>ATTENDED CAMP</div>
           <select style={{...inp,fontSize:12}} value={filterCampType} onChange={e=>setFilterCampType(e.target.value)}>
             <option value="">Any</option>{(db.campTypes||[]).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-          </select></div>
+          </select>
+        </div>
       </div>}
+
+      {/* Active filter summary line */}
+      <div style={{fontSize:12,color:"var(--muted)",paddingLeft:2}}>{summaryLine}</div>
     </div>
-    {students.length===0?<EmptyState icon="🎒" text={activeFilterCount>0?"No students match your filters.":"No students yet."}/>:
-    <div style={{display:"grid",gap:10}}>
+    {students.length===0
+      ?<EmptyState icon="🎒" text={activeFilterCount>0?"No students match your current filters.":"No students yet."}/>
+      :<div style={{display:"grid",gap:10}}>
       {students.map(s=>{
         const regs=(db.registrations||[]).filter(r=>r.studentId===s.id);
         const attended=regs.filter(r=>{const sess=(db.sessions||[]).find(ss=>ss.id===r.sessionId);return sess?.status==="completed";}).length;
@@ -1153,7 +1297,7 @@ function Students({db,refresh,school,onBack,actor,onHome}){
               <div style={{fontWeight:700,fontSize:14}}>{s.name}{s.nameChinese&&<span style={{fontWeight:400,color:"var(--muted)"}}> ({s.nameChinese})</span>} <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>· {s.className} · Age {calcAge(s.dob)}{s.gender&&` · ${s.gender}`}</span></div>
               <div style={{fontSize:12,color:"var(--muted)"}}>IC: {s.ic} · {s.parentRelation}: {s.parentName} · {s.parentPhone}{(s.parentPhoneExtra||[]).filter(Boolean).length>0&&`, ${s.parentPhoneExtra.filter(Boolean).join(", ")}`}</div>
               {canSeeBank&&(s.bankName||s.bankAccountNo)&&<div style={{fontSize:12,color:"var(--muted)"}}>🏦 {s.bankName} · {isRevealed?s.bankAccountNo:maskAccountNo(s.bankAccountNo)} <span onClick={()=>setRevealBank({...revealBank,[s.id]:!isRevealed})} style={{cursor:"pointer",color:"var(--accent)",fontSize:11}}>{isRevealed?"hide":"👁 reveal"}</span></div>}
-              {siblings.length>0&&<div style={{fontSize:12,color:"#7c3aed"}}>👨‍👩‍👧 Siblings: {siblings.map(sb=>sb.name).join(", ")}</div>}
+              {siblings.length>0&&<div style={{fontSize:12,color:"#7c3aed"}}>👨‍👩‍👧 Siblings: {siblings.map(sb=>`${sb.name}${sb.className?` (${sb.className})`:""}`).join(", ")}</div>}
               {s.allergies&&<div style={{fontSize:12,color:"#dc2626"}}>⚠ {s.allergies}</div>}
             </div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"flex-start"}}>
@@ -1540,7 +1684,8 @@ function SessionRegistrations({session,db,refresh,actor}){
           {filteredAvailable.length===0?<div style={{padding:"16px",fontSize:12,color:"var(--muted)",textAlign:"center"}}>No eligible students match filters.</div>:
           filteredAvailable.map(s=>{
             const fee=calcFee(s.id);
-            const isSib=(db.students||[]).some(o=>o.parentPhone===s.parentPhone&&o.id!==s.id&&regs.some(r=>r.studentId===o.id));
+            const sibsRegistered=(db.students||[]).filter(o=>o.parentPhone===s.parentPhone&&o.id!==s.id&&regs.some(r=>r.studentId===o.id));
+            const isSib=sibsRegistered.length>0;
             return <label key={s.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderBottom:"1px solid var(--border)",cursor:"pointer",background:selected.has(s.id)?"rgba(0,230,118,0.06)":"transparent"}}>
               <input type="checkbox" checked={selected.has(s.id)} onChange={()=>toggleSel(s.id)} style={{width:14,height:14,flexShrink:0}}/>
               <div style={{flex:1}}>
@@ -1549,7 +1694,7 @@ function SessionRegistrations({session,db,refresh,actor}){
               </div>
               <div style={{textAlign:"right"}}>
                 <div style={{fontSize:12,fontWeight:700,color:"var(--accent)"}}>{fmt(fee)}</div>
-                {isSib&&<div style={{fontSize:10,color:"var(--purple)"}}>sibling</div>}
+                {isSib&&<div style={{fontSize:10,color:"var(--purple)"}}>👨‍👩‍👧 sib: {sibsRegistered.map(o=>o.className||o.name).join(", ")}</div>}
               </div>
             </label>;
           })}
@@ -3668,7 +3813,7 @@ function App(){
             style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:collapsed?"9px 0":"9px 14px",border:"none",
               background:active?"linear-gradient(90deg,rgba(0,230,118,0.15),transparent)":"transparent",
               cursor:"pointer",fontSize:13,fontWeight:active?700:400,
-              color:active?"var(--accent)":"var(--muted)",textAlign:"left",
+              color:active?"var(--accent)":"#ffffff",textAlign:"left",
               borderLeft:collapsed?"none":`3px solid ${active?"var(--accent)":"transparent"}`,
               justifyContent:collapsed?"center":"flex-start",transition:"all 0.15s"}}>
             <span style={{fontSize:16,color:active?"var(--accent)":ic,flexShrink:0,textAlign:"center",width:collapsed?"100%":22}}>{m.icon}</span>
@@ -3679,7 +3824,7 @@ function App(){
       <div style={{padding:(!isMobile&&sidebarCollapsed)?"8px 4px":"10px 12px",borderTop:"1px solid var(--border2)"}}>
         {!(!isMobile&&sidebarCollapsed)&&<div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
           <div style={{width:28,height:28,borderRadius:"50%",background:"linear-gradient(135deg,var(--accent),var(--purple))",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#000",flexShrink:0}}>{user.name?.[0]?.toUpperCase()||"?"}</div>
-          <div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:700,color:"var(--text)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.name}</div><div style={{fontSize:10,color:"var(--muted)"}}>{user.role?.toUpperCase()}</div></div>
+          <div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:700,color:"#ffffff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.name}</div><div style={{fontSize:10,color:"rgba(255,255,255,0.6)"}}>{user.role?.toUpperCase()}</div></div>
         </div>}
         <button onClick={logout} style={{...btn("danger"),width:"100%",padding:"8px 10px",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
           🚪{!(!isMobile&&sidebarCollapsed)&&" Logout"}
@@ -3687,8 +3832,8 @@ function App(){
         {!(!isMobile&&sidebarCollapsed)&&<div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>
           <a href="https://github.com/calexcl/HD-Manager/raw/main/HD_Manager_User_Manual.docx" target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:5,fontSize:12,color:"var(--accent)",textDecoration:"none",padding:"3px 0"}}>📖 User Manual (EN/中文)</a>
           {user.role==="admin"&&<>
-            <a href="https://calexcl.github.io/HD-Manager/" target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:"var(--muted)",textDecoration:"none",padding:"3px 0"}}>🌐 GitHub Pages</a>
-            <a href="https://github.com/calexcl/HD-Manager" target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:"var(--muted)",textDecoration:"none",padding:"3px 0"}}>📦 Repository</a>
+            <a href="https://calexcl.github.io/HD-Manager/" target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:"rgba(255,255,255,0.7)",textDecoration:"none",padding:"3px 0"}}>🌐 GitHub Pages</a>
+            <a href="https://github.com/calexcl/HD-Manager" target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:"rgba(255,255,255,0.7)",textDecoration:"none",padding:"3px 0"}}>📦 Repository</a>
           </>}
           <div style={{fontSize:8,color:"var(--muted2)",marginTop:4,textAlign:"center"}}>{APP_VERSION}</div>
         </div>}
