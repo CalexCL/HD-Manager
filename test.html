@@ -2,11 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Happy Dino Xperience Camp - Full System</title>
+<title>Happy Dino Xperience Camp - Complete System</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -33,8 +32,11 @@
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:13.5px}
 input,select,textarea{font-family:inherit;font-size:14px;width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);outline:none}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px}
-.btn{padding:8px 16px;border-radius:8px;border:none;cursor:pointer;font-weight:600;font-size:13px;display:inline-flex;align-items:center;justify-content:center;gap:6px}
-.btn-p{background:var(--accent);color:#fff}.btn-g{background:var(--surface2);color:var(--text)}.btn-d{background:#ef4444;color:#fff}
+.btn{padding:8px 16px;border-radius:8px;border:none;cursor:pointer;font-weight:600;font-size:13px;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:0.2s}
+.btn-p{background:var(--accent);color:#fff}.btn-p:hover{opacity:0.9}
+.btn-g{background:var(--surface2);color:var(--text)}.btn-d{background:#ef4444;color:#fff}
+.sidebar-btn{width:100%;text-align:left;padding:10px;background:transparent;color:white;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:10px}
+.sidebar-btn:hover{background:#334155}.sidebar-btn.active{background:var(--accent);color:white}
 table{width:100%;border-collapse:collapse}th{text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;padding:10px}td{padding:10px;border-top:1px solid var(--border)}
 </style>
 </head>
@@ -50,12 +52,6 @@ const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const fmt=(n)=>`RM ${parseFloat(n||0).toFixed(2)}`;
 const fmtDate=(d)=>d?new Date(d).toLocaleDateString("en-MY",{day:"2-digit",month:"short",year:"numeric"}):"—";
 const calcAge=(dob)=>dob?Math.floor((Date.now()-new Date(dob).getTime())/(1000*60*60*24*365.25)):"—";
-const maskAccountNo=(acc)=>{if(!acc)return"—";const d=String(acc).replace(/\s+/g,"");return d.length<=4?d:"•••• •••• "+d.slice(-4)};
-
-const defaultPermissions=(role)=>{
-  const base={finance:{schools:'view',students:'view',payments:'full',purchases:'full',reports:'view'},user:{schools:'full',students:'full',sessions:'full',crew:'full',communications:'full'},viewer:{reports:'view'}};
-  return base[role]||base.viewer;
-};
 
 const userCan=(u,p,a='view')=>{
   if(!u||u.role==='admin')return true;
@@ -67,26 +63,28 @@ const userCan=(u,p,a='view')=>{
 function AppProvider({children}){
   const [db,setDbState]=useState(()=>JSON.parse(localStorage.getItem(DB_KEY)||"{}"));
   const updateDB=useCallback((p)=>{setDbState(prev=>{const n={...prev,...p};localStorage.setItem(DB_KEY,JSON.stringify(n));return n;});},[]);
+  
   const nextDocNo=(pre)=>{
-    const s={...(db.acctSeq||{INV:0,BILL:0,REC:0,PUR:0,PAY:0})};
-    s[pre]=(s[pre]||0)+1;updateDB({acctSeq:s});
+    const s={...(db.acctSeq||{INV:0,BILL:0,REC:0,PUR:0,PAY:0,CN:0,REF:0})};
+    s[pre]=(s[pre]||0)+1; 
+    updateDB({acctSeq:s});
     return `${pre}-${new Date().getFullYear()}-${String(s[pre]).padStart(4,"0")}`;
   };
+
   return <AppDataContext.Provider value={{db,updateDB,nextDocNo}}>{children}</AppDataContext.Provider>;
 }
 
 // --- SHARED UI ---
 const Badge=({label,color})=>{
-  const c={green:["#dcfce7","#16a34a"],blue:["#dbeafe","#2563eb"],amber:["#fef3c7","#d97706"],red:["#fee2e2","#dc2626"]}[color]||["#f1f5f9","#64748b"];
+  const c={green:["#dcfce7","#16a34a"],blue:["#dbeafe","#2563eb"],amber:["#fef3c7","#d97706"],red:["#fee2e2","#dc2626"],purple:["#ede9fe","#7c3aed"]}[color]||["#f1f5f9","#64748b"];
   return <span style={{display:"inline-block",padding:"2px 8px",borderRadius:99,fontSize:11,fontWeight:700,background:c[0],color:c[1]}}>{label}</span>
 };
-const Field=({label,children})=><div style={{marginBottom:14}}><label style={{display:"block",fontSize:11,fontWeight:700,color:"var(--muted)",marginBottom:4,textTransform:"uppercase"}}>{label}</label>{children}</div>;
-const Modal=({title,onClose,children,wide})=><div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><div style={{background:"var(--surface)",borderRadius:16,width:"100%",maxWidth:wide?700:500,maxHeight:"90vh",overflowY:"auto",padding:24,boxShadow:"0 20px 50px rgba(0,0,0,0.3)"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}><h3>{title}</h3><button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20}}>✕</button></div>{children}</div></div>;
+const Field=({label,children,hint})=><div style={{marginBottom:14}}><label style={{display:"block",fontSize:11,fontWeight:700,color:"var(--muted)",marginBottom:4,textTransform:"uppercase"}}>{label}</label>{children}{hint&&<div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>{hint}</div>}</div>;
+const Modal=({title,onClose,children,wide})=><div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><div style={{background:"var(--surface)",borderRadius:16,width:"100%",maxWidth:wide?800:500,maxHeight:"92vh",overflowY:"auto",padding:24,boxShadow:"0 20px 50px rgba(0,0,0,0.3)"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}><h3>{title}</h3><button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20}}>✕</button></div>{children}</div></div>;
 
-// --- STORAGE HELPER ---
 async function uploadToCloud(file){
   const F=window.HDFirebase;
-  const ref=F.ref(F.storage,`uploads/${Date.now()}-${file.name}`);
+  const ref=F.ref(F.storage,`receipts/${Date.now()}-${file.name}`);
   const snap=await F.uploadBytes(ref,file);
   return await F.getDownloadURL(snap.ref);
 }
@@ -95,13 +93,27 @@ async function uploadToCloud(file){
 
 function Dashboard(){
   const {db}=useContext(AppDataContext);
-  const paid=useMemo(()=>(db.payments||[]).filter(p=>p.status==='paid').reduce((a,p)=>a+parseFloat(p.amount||0),0),[db.payments]);
-  const exp=useMemo(()=>(db.expenses||[]).reduce((a,e)=>a+parseFloat(e.amount||0),0),[db.expenses]);
-  return <div><h2>Dashboard</h2><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:16,marginTop:20}}>
-    <div className="card" style={{borderLeft:"4px solid var(--accent)"}}><h4>Total Revenue</h4><div style={{fontSize:24,fontWeight:800}}>{fmt(paid)}</div></div>
-    <div className="card" style={{borderLeft:"4px solid #ef4444"}}><h4>Expenses</h4><div style={{fontSize:24,fontWeight:800}}>{fmt(exp)}</div></div>
-    <div className="card" style={{borderLeft:"4px solid #2563eb"}}><h4>Schools</h4><div style={{fontSize:24,fontWeight:800}}>{(db.schools||[]).length}</div></div>
-  </div></div>;
+  const {user}=useContext(AuthContext);
+  const stats = useMemo(()=>{
+    const p = db.payments||[];
+    const e = db.expenses||[];
+    return {
+      rev: p.filter(x=>x.status==='paid').reduce((a,b)=>a+parseFloat(b.amount||0),0),
+      exp: e.reduce((a,b)=>a+parseFloat(b.amount||0),0),
+      sch: (db.schools||[]).length,
+      stu: (db.students||[]).length
+    }
+  },[db]);
+
+  return <div>
+    <h2>Welcome, {user?.name}</h2>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:16,marginTop:20}}>
+      <div className="card" style={{borderLeft:"4px solid var(--accent)"}}><h4>Revenue (Paid)</h4><div style={{fontSize:24,fontWeight:800}}>{fmt(stats.rev)}</div></div>
+      <div className="card" style={{borderLeft:"4px solid #ef4444"}}><h4>Expenses</h4><div style={{fontSize:24,fontWeight:800}}>{fmt(stats.exp)}</div></div>
+      <div className="card" style={{borderLeft:"4px solid #2563eb"}}><h4>Active Schools</h4><div style={{fontSize:24,fontWeight:800}}>{stats.sch}</div></div>
+      <div className="card" style={{borderLeft:"4px solid #7c3aed"}}><h4>Total Students</h4><div style={{fontSize:24,fontWeight:800}}>{stats.stu}</div></div>
+    </div>
+  </div>;
 }
 
 function Schools(){
@@ -114,15 +126,25 @@ function Schools(){
     const n = modal.data.id ? list.map(s=>s.id===modal.data.id?modal.data:s) : [...list,{...modal.data,id:uid()}];
     updateDB({schools:n});setModal({open:false,data:{}});
   };
-  return <div><div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Schools</h2>{canEdit&&<button className="btn btn-p" onClick={()=>setModal({open:true,data:{}})}>+ Add School</button>}</div>
-    {list.map(s=><div key={s.id} className="card" style={{display:'flex',justifyContent:'space-between'}}><div><strong>{s.name}</strong><div style={{fontSize:12,color:'var(--muted)'}}>{s.address}</div></div>
-    {canEdit&&<button className="btn btn-g" onClick={()=>setModal({open:true,data:s})}>Edit</button>}</div>)}
-    {modal.open&&<Modal title="School Details" onClose={()=>setModal({open:false,data:{}})}>
+  return <div>
+    <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Schools</h2>{canEdit&&<button className="btn btn-p" onClick={()=>setModal({open:true,data:{}})}>+ Add School</button>}</div>
+    <div style={{display:'grid', gap:10}}>
+      {list.map(s=><div key={s.id} className="card" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div><strong>{s.name}</strong><div style={{fontSize:12,color:'var(--muted)'}}>{s.address}</div></div>
+        <div style={{display:'flex', gap:8}}>
+          <Badge label={`${(db.students||[]).filter(x=>x.schoolId===s.id).length} Students`} color="blue" />
+          {canEdit&&<button className="btn btn-g" onClick={()=>setModal({open:true,data:s})}>Edit</button>}
+        </div>
+      </div>)}
+    </div>
+    {modal.open&&<Modal title="School Information" onClose={()=>setModal({open:false,data:{}})}>
       <Field label="School Name"><input value={modal.data.name||""} onChange={e=>setModal({...modal,data:{...modal.data,name:e.target.value}})} /></Field>
-      <Field label="Address"><input value={modal.data.address||""} onChange={e=>setModal({...modal,data:{...modal.data,address:e.target.value}})} /></Field>
+      <Field label="Address"><textarea value={modal.data.address||""} onChange={e=>setModal({...modal,data:{...modal.data,address:e.target.value}})} /></Field>
       <Field label="Principal"><input value={modal.data.principal||""} onChange={e=>setModal({...modal,data:{...modal.data,principal:e.target.value}})} /></Field>
-      <button className="btn btn-p" onClick={save} style={{width:'100%',marginTop:10}}>Save</button>
-    </Modal>}</div>;
+      <Field label="Phone"><input value={modal.data.phone||""} onChange={e=>setModal({...modal,data:{...modal.data,phone:e.target.value}})} /></Field>
+      <button className="btn btn-p" onClick={save} style={{width:'100%'}}>Save School</button>
+    </Modal>}
+  </div>;
 }
 
 function Students(){
@@ -136,91 +158,269 @@ function Students(){
     const n = modal.data.id ? list.map(s=>s.id===modal.data.id?modal.data:s) : [...list,{...modal.data,id:uid()}];
     updateDB({students:n});setModal({open:false,data:{}});
   };
-  return <div><div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Students</h2>{canEdit&&<button className="btn btn-p" onClick={()=>setModal({open:true,data:{}})}>+ Add Student</button>}</div>
-    {list.map(s=><div key={s.id} className="card" style={{display:'flex',justifyContent:'space-between'}}><div><strong>{s.name} {s.nameChinese&&`(${s.nameChinese})`}</strong><div style={{fontSize:12,color:'var(--muted)'}}>{s.className} · IC: {s.ic} · {s.parentPhone}</div></div>
-    {canEdit&&<button className="btn btn-g" onClick={()=>setModal({open:true,data:s})}>Edit</button>}</div>)}
-    {modal.open&&<Modal title="Student Details" onClose={()=>setModal({open:false,data:{}})} wide>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+  return <div>
+    <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Students</h2>{canEdit&&<button className="btn btn-p" onClick={()=>setModal({open:true,data:{parentRelation:'Mother'}})}>+ Add Student</button>}</div>
+    {list.map(s=><div key={s.id} className="card" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <div>
+        <strong>{s.name} {s.nameChinese&&<span style={{fontWeight:400,color:'var(--muted)'}}>({s.nameChinese})</span>}</strong>
+        <div style={{fontSize:12,color:'var(--muted)'}}>{s.className} · IC: {s.ic} · Age: {calcAge(s.dob)}</div>
+        <div style={{fontSize:11,color:'var(--accent)'}}>{s.parentName} ({s.parentPhone})</div>
+      </div>
+      {canEdit&&<button className="btn btn-g" onClick={()=>setModal({open:true,data:s})}>Edit</button>}
+    </div>)}
+    {modal.open&&<Modal title="Student Details" onClose={()=>setModal({open:false})} wide>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <Field label="Full Name"><input value={modal.data.name||""} onChange={e=>setModal({...modal,data:{...modal.data,name:e.target.value}})} /></Field>
         <Field label="Chinese Name"><input value={modal.data.nameChinese||""} onChange={e=>setModal({...modal,data:{...modal.data,nameChinese:e.target.value}})} /></Field>
-        <Field label="IC Number"><input value={modal.data.ic||""} onChange={e=>setModal({...modal,data:{...modal.data,ic:e.target.value}})} /></Field>
+        <Field label="IC / MyKid"><input value={modal.data.ic||""} onChange={e=>setModal({...modal,data:{...modal.data,ic:e.target.value}})} /></Field>
         <Field label="Class"><input value={modal.data.className||""} onChange={e=>setModal({...modal,data:{...modal.data,className:e.target.value}})} /></Field>
+        <Field label="Date of Birth"><input type="date" value={modal.data.dob||""} onChange={e=>setModal({...modal,data:{...modal.data,dob:e.target.value}})} /></Field>
+        <Field label="T-Shirt Size"><select value={modal.data.tshirtSize||""} onChange={e=>setModal({...modal,data:{...modal.data,tshirtSize:e.target.value}})}>
+          <option value="">Select</option>{sizes.map(z=><option key={z.id} value={z.label}>{z.label} ({z.chest})</option>)}</select></Field>
         <Field label="Parent Name"><input value={modal.data.parentName||""} onChange={e=>setModal({...modal,data:{...modal.data,parentName:e.target.value}})} /></Field>
         <Field label="Parent Phone"><input value={modal.data.parentPhone||""} onChange={e=>setModal({...modal,data:{...modal.data,parentPhone:e.target.value}})} /></Field>
-        <Field label="T-Shirt Size"><select value={modal.data.tshirtSize||""} onChange={e=>setModal({...modal,data:{...modal.data,tshirtSize:e.target.value}})}>
-          <option value="">Select</option>{sizes.map(z=><option key={z.id}>{z.label}</option>)}</select></Field>
-        <Field label="Date of Birth"><input type="date" value={modal.data.dob||""} onChange={e=>setModal({...modal,data:{...modal.data,dob:e.target.value}})} /></Field>
+        <Field label="Allergies"><input value={modal.data.allergies||""} onChange={e=>setModal({...modal,data:{...modal.data,allergies:e.target.value}})} /></Field>
+        <Field label="School">
+          <select value={modal.data.schoolId||""} onChange={e=>setModal({...modal,data:{...modal.data,schoolId:e.target.value}})}>
+            <option value="">Select School</option>{db.schools.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
       </div>
-      <Field label="Allergies"><input value={modal.data.allergies||""} onChange={e=>setModal({...modal,data:{...modal.data,allergies:e.target.value}})} /></Field>
-      <button className="btn btn-p" onClick={save} style={{width:'100%',marginTop:10}}>Save Student</button>
-    </Modal>}</div>;
+      <button className="btn btn-p" onClick={save} style={{width:'100%',marginTop:10}}>Save Student Record</button>
+    </Modal>}
+  </div>;
+}
+
+function CampTypes(){
+  const {db,updateDB}=useContext(AppDataContext);
+  const {user}=useContext(AuthContext);
+  const [modal,setModal]=useState({open:false,data:{}});
+  const canEdit=userCan(user,'campTypes','edit');
+  const list=db.campTypes||[];
+  const save=()=>{
+    const n = modal.data.id ? list.map(c=>c.id===modal.data.id?modal.data:c) : [...list,{...modal.data,id:uid()}];
+    updateDB({campTypes:n});setModal({open:false,data:{}});
+  };
+  return <div>
+    <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Camp Types</h2>{canEdit&&<button className="btn btn-p" onClick={()=>setModal({open:true,data:{discountable:true,sibling2Pct:10,sibling3Pct:20}})}>+ New Type</button>}</div>
+    {list.map(c=><div key={c.id} className="card" style={{display:'flex',justifyContent:'space-between'}}>
+      <div><strong>{c.name}</strong><div>Fee: {fmt(c.fee)} · Crew: {fmt(c.crewFee)}</div></div>
+      {canEdit&&<button className="btn btn-g" onClick={()=>setModal({open:true,data:c})}>Edit</button>}
+    </div>)}
+    {modal.open&&<Modal title="Camp Type Config" onClose={()=>setModal({open:false})}>
+      <Field label="Camp Name"><input value={modal.data.name||""} onChange={e=>setForm({...modal.data,name:e.target.value})} /></Field>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+        <Field label="Standard Fee"><input type="number" value={modal.data.fee||""} onChange={e=>setModal({...modal,data:{...modal.data,fee:e.target.value}})} /></Field>
+        <Field label="Base Crew Fee"><input type="number" value={modal.data.crewFee||""} onChange={e=>setModal({...modal,data:{...modal.data,crewFee:e.target.value}})} /></Field>
+      </div>
+      <button className="btn btn-p" onClick={save} style={{width:'100%'}}>Save Camp Type</button>
+    </Modal>}
+  </div>;
+}
+
+function Sessions(){
+  const {db,updateDB}=useContext(AppDataContext);
+  const {user}=useContext(AuthContext);
+  const [modal,setModal]=useState({open:false,data:{}});
+  const [sel,setSel]=useState(null);
+  const list=db.sessions||[];
+  const canEdit=userCan(user,'sessions','edit');
+
+  if(sel) return <div>
+    <button className="btn btn-g" onClick={()=>setSel(null)} style={{marginBottom:15}}>← Back to List</button>
+    <div className="card">
+      <h3>{db.schools.find(x=>x.id===sel.schoolId)?.name}</h3>
+      <p style={{color:'var(--muted)'}}>{fmtDate(sel.date)} · {db.campTypes.find(x=>x.id===sel.campTypeId)?.name}</p>
+    </div>
+    <h4>Attendance</h4>
+    <div className="card">
+      {(db.registrations||[]).filter(r=>r.sessionId===sel.id).map(r=>{
+        const s=db.students.find(x=>x.id===r.studentId);
+        return <div key={r.id} style={{display:'flex',justifyContent:'space-between',padding:'10px 0',borderTop:'1px solid var(--border)'}}>
+          <span>{s?.name}</span>
+          <input type="checkbox" style={{width:20}} checked={r.present} onChange={()=>{
+            const nr=db.registrations.map(x=>x.id===r.id?{...x,present:!x.present}:x);
+            updateDB({registrations:nr});
+          }} />
+        </div>
+      })}
+    </div>
+  </div>;
+
+  return <div>
+    <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Sessions</h2>{canEdit&&<button className="btn btn-p" onClick={()=>setModal({open:true,data:{status:'scheduled'}})}>+ New Session</button>}</div>
+    {list.map(s=><div key={s.id} className="card" onClick={()=>setSel(s)} style={{cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
+      <div><strong>{db.schools.find(x=>x.id===s.schoolId)?.name}</strong><div style={{fontSize:12,color:'var(--muted)'}}>{fmtDate(s.date)}</div></div>
+      <Badge label={s.status} color={s.status==='completed'?'green':'amber'} />
+    </div>)}
+    {modal.open&&<Modal title="Create Session" onClose={()=>setModal({open:false})}>
+      <Field label="School"><select onChange={e=>setModal({...modal,data:{...modal.data,schoolId:e.target.value}})}><option>Select</option>{db.schools.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+      <Field label="Camp Type"><select onChange={e=>setModal({...modal,data:{...modal.data,campTypeId:e.target.value}})}><option>Select</option>{db.campTypes.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+      <Field label="Date"><input type="date" onChange={e=>setModal({...modal,data:{...modal.data,date:e.target.value}})} /></Field>
+      <button className="btn btn-p" onClick={()=>{updateDB({sessions:[...list,{...modal.data,id:uid()}]});setModal({open:false})}} style={{width:'100%'}}>Save Session</button>
+    </Modal>}
+  </div>;
+}
+
+function Crew(){
+  const {db,updateDB}=useContext(AppDataContext);
+  const {user}=useContext(AuthContext);
+  const [modal,setModal]=useState({open:false,data:{}});
+  const canEdit=userCan(user,'crew','edit');
+  const list=db.crew||[];
+  const save=()=>{
+    const n = modal.data.id ? list.map(c=>c.id===modal.data.id?modal.data:c) : [...list,{...modal.data,id:uid()}];
+    updateDB({crew:n});setModal({open:false,data:{}});
+  };
+  return <div>
+    <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Crew Members</h2>{canEdit&&<button className="btn btn-p" onClick={()=>setModal({open:true,data:{rating:3}})}>+ Add Crew</button>}</div>
+    {list.map(c=><div key={c.id} className="card" style={{display:'flex',justifyContent:'space-between'}}>
+      <div><strong>{c.name}</strong><div style={{fontSize:12,color:'var(--muted)'}}>{c.phone} · Rating: {c.rating}/5</div></div>
+      {canEdit&&<button className="btn btn-g" onClick={()=>setModal({open:true,data:c})}>Edit</button>}
+    </div>)}
+    {modal.open&&<Modal title="Crew Details" onClose={()=>setModal({open:false})}>
+      <Field label="Full Name"><input value={modal.data.name||""} onChange={e=>setModal({...modal,data:{...modal.data,name:e.target.value}})} /></Field>
+      <Field label="Phone"><input value={modal.data.phone||""} onChange={e=>setModal({...modal,data:{...modal.data,phone:e.target.value}})} /></Field>
+      <Field label="Default Fee"><input type="number" value={modal.data.defaultFee||""} onChange={e=>setModal({...modal,data:{...modal.data,defaultFee:e.target.value}})} /></Field>
+      <Field label="Rating (1-5)"><input type="number" min="1" max="5" value={modal.data.rating||3} onChange={e=>setModal({...modal,data:{...modal.data,rating:e.target.value}})} /></Field>
+      <button className="btn btn-p" onClick={save} style={{width:'100%'}}>Save Crew</button>
+    </Modal>}
+  </div>;
+}
+
+function Inventory(){
+  const {db,updateDB}=useContext(AppDataContext);
+  const [modal,setModal]=useState({open:false,data:{}});
+  const list=db.inventory||[];
+  return <div>
+    <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Inventory</h2><button className="btn btn-p" onClick={()=>setModal({open:true,data:{qty:0}})}>+ Add Item</button></div>
+    {list.map(i=><div key={i.id} className="card" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <div><strong>{i.name}</strong><div style={{fontSize:12,color:'var(--muted)'}}>{i.category} · {i.qty} {i.unit}</div></div>
+      <div style={{display:'flex',gap:6}}>
+        <button className="btn btn-g" onClick={()=>{updateDB({inventory:list.map(x=>x.id===i.id?{...x,qty:Math.max(0,x.qty-1)}:x)})}}>-</button>
+        <button className="btn btn-g" onClick={()=>{updateDB({inventory:list.map(x=>x.id===i.id?{...x,qty:x.qty+1}:x)})}}>+</button>
+      </div>
+    </div>)}
+    {modal.open&&<Modal title="Inventory Item" onClose={()=>setModal({open:false})}>
+      <Field label="Item Name"><input value={modal.data.name||""} onChange={e=>setModal({...modal,data:{...modal.data,name:e.target.value}})} /></Field>
+      <Field label="Current Qty"><input type="number" value={modal.data.qty||0} onChange={e=>setModal({...modal,data:{...modal.data,qty:parseInt(e.target.value)}})} /></Field>
+      <Field label="Unit (e.g. pcs)"><input value={modal.data.unit||""} onChange={e=>setModal({...modal,data:{...modal.data,unit:e.target.value}})} /></Field>
+      <button className="btn btn-p" onClick={()=>{updateDB({inventory:[...list,{...modal.data,id:uid()}]});setModal({open:false})}} style={{width:'100%'}}>Save Item</button>
+    </Modal>}
+  </div>;
 }
 
 function Purchases(){
   const {db,updateDB,nextDocNo}=useContext(AppDataContext);
-  const {user}=useContext(AuthContext);
   const [modal,setModal]=useState({open:false,data:{}});
   const [busy,setBusy]=useState(false);
   const list=db.purchases||[];
+
   const save=async()=>{
     setBusy(true);try{
-      let url=modal.data.photo||""; const el=document.getElementById("p-file");
+      let url=modal.data.photo||""; 
+      const el=document.getElementById("p-img");
       if(el?.files[0])url=await uploadToCloud(el.files[0]);
       const rec={...modal.data,photo:url,id:modal.data.id||uid()};
       const n=modal.data.id?list.map(p=>p.id===modal.data.id?rec:p):[...list,rec];
       updateDB({purchases:n});setModal({open:false,data:{}});
     }catch(e){alert(e.message)}finally{setBusy(false)}
   };
-  return <div><div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Purchases</h2><button className="btn btn-p" onClick={()=>setModal({open:true,data:{docNo:nextDocNo("PUR"),date:new Date().toISOString().slice(0,10),category:'Materials'}})}>+ New Purchase</button></div>
-    {list.map(p=><div key={p.id} className="card" style={{display:'flex',justifyContent:'space-between'}}><div><strong>{p.supplier}</strong><div>{fmt(p.amount)} · {p.docNo}</div></div>
-    {p.photo&&<a href={p.photo} target="_blank" className="btn btn-g" style={{fontSize:11}}>View Receipt</a>}</div>)}
-    {modal.open&&<Modal title={modal.data.docNo} onClose={()=>setModal({open:false,data:{}})}>
+
+  return <div>
+    <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Purchases</h2><button className="btn btn-p" onClick={()=>setModal({open:true,data:{docNo:nextDocNo("PUR"),date:new Date().toISOString().slice(0,10),category:'Materials'}})}>+ New Record</button></div>
+    {list.map(p=><div key={p.id} className="card" style={{display:'flex',justifyContent:'space-between'}}>
+      <div><strong>{p.supplier}</strong><div>{fmt(p.amount)} · {p.docNo}</div></div>
+      <div style={{display:'flex',gap:6}}>
+        {p.photo&&<a href={p.photo} target="_blank" className="btn btn-g" style={{fontSize:11}}>View Receipt</a>}
+        <button className="btn btn-d" onClick={()=>{if(window.confirm("Delete?"))updateDB({purchases:list.filter(x=>x.id!==p.id)})}}>Del</button>
+      </div>
+    </div>)}
+    {modal.open&&<Modal title={modal.data.docNo} onClose={()=>setModal({open:false})}>
       <Field label="Supplier"><input value={modal.data.supplier||""} onChange={e=>setModal({...modal,data:{...modal.data,supplier:e.target.value}})} /></Field>
       <Field label="Amount"><input type="number" value={modal.data.amount||""} onChange={e=>setModal({...modal,data:{...modal.data,amount:e.target.value}})} /></Field>
-      <Field label="Receipt Image"><input type="file" id="p-file" accept="image/*" /></Field>
-      <button className="btn btn-p" onClick={save} disabled={busy} style={{width:'100%'}}>{busy?"Uploading...":"Save Record"}</button>
-    </Modal>}</div>;
-}
-
-function Sessions(){
-  const {db,updateDB}=useContext(AppDataContext);
-  const [modal,setModal]=useState({open:false,data:{}});
-  const [sel,setSel]=useState(null);
-  const list=db.sessions||[];
-  if(sel) return <div><button className="btn btn-g" onClick={()=>setSel(null)} style={{marginBottom:20}}>← Back</button>
-    <h2>{db.schools.find(s=>s.id===sel.schoolId)?.name}</h2><p>{fmtDate(sel.date)}</p>
-    <div className="card" style={{marginTop:20}}><h4>Attendance</h4>
-      {(db.registrations||[]).filter(r=>r.sessionId===sel.id).map(r=>{
-        const s=db.students.find(x=>x.id===r.studentId);
-        return <div key={r.id} style={{display:'flex',justifyContent:'space-between',padding:8,borderTop:'1px solid var(--border)'}}><span>{s?.name}</span><input type="checkbox" style={{width:20}} checked={r.present} onChange={()=>{
-          updateDB({registrations:db.registrations.map(x=>x.id===r.id?{...x,present:!x.present}:x)});
-        }} /></div>
-      })}
-    </div></div>;
-  return <div><div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Sessions</h2><button className="btn btn-p" onClick={()=>setModal({open:true,data:{status:'scheduled'}})}>+ New Session</button></div>
-    {list.map(s=>{const sc=db.schools.find(x=>x.id===s.schoolId);return <div key={s.id} className="card" onClick={()=>setSel(s)} style={{cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
-      <div><strong>{sc?.name}</strong><div>{fmtDate(s.date)}</div></div><Badge label={s.status} color={s.status==='completed'?'green':'amber'} /></div>})}
-    {modal.open&&<Modal title="New Session" onClose={()=>setModal({open:false})}>
-      <Field label="School"><select onChange={e=>setModal({...modal,data:{...modal.data,schoolId:e.target.value}})}>{db.schools.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-      <Field label="Date"><input type="date" onChange={e=>setModal({...modal,data:{...modal.data,date:e.target.value}})} /></Field>
-      <button className="btn btn-p" onClick={()=>{updateDB({sessions:[...list,{...modal.data,id:uid()}]});setModal({open:false})}} style={{width:'100%'}}>Create Session</button>
-    </Modal>}</div>;
+      <Field label="Receipt Photo (Upload to Cloud)"><input type="file" id="p-img" accept="image/*" /></Field>
+      <button className="btn btn-p" onClick={save} disabled={busy} style={{width:'100%'}}>{busy?"Uploading Image...":"Save Purchase"}</button>
+    </Modal>}
+  </div>;
 }
 
 function Invoices(){
   const {db,updateDB,nextDocNo}=useContext(AppDataContext);
   const [modal,setModal]=useState({open:false,data:{}});
   const list=db.accountingInvoices||[];
-  return <div><div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Invoices</h2><button className="btn btn-p" onClick={()=>setModal({open:true,data:{docNo:nextDocNo("INV"),date:new Date().toISOString().slice(0,10),status:'Draft',lines:[]}})}>+ New Invoice</button></div>
-    {list.map(i=><div key={i.id} className="card" style={{display:'flex',justifyContent:'space-between'}}><div><strong>{i.docNo}</strong><div>{i.toName} · {i.status}</div></div><button className="btn btn-g" onClick={()=>setModal({open:true,data:i})}>Edit</button></div>)}
+  const save=()=>{
+    const n = modal.data.id ? list.map(i=>i.id===modal.data.id?modal.data:i) : [...list,{...modal.data,id:uid()}];
+    updateDB({accountingInvoices:n});setModal({open:false,data:{}});
+  };
+  return <div>
+    <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><h2>Invoices</h2><button className="btn btn-p" onClick={()=>setModal({open:true,data:{docNo:nextDocNo("INV"),date:new Date().toISOString().slice(0,10),status:'Draft'}})}>+ New Invoice</button></div>
+    {list.map(i=><div key={i.id} className="card" style={{display:'flex',justifyContent:'space-between'}}>
+      <div><strong>{i.docNo}</strong><div>{i.toName} · {i.status}</div></div>
+      <div style={{display:'flex',gap:6}}>
+        <div style={{fontWeight:700,marginRight:10}}>{fmt(i.total)}</div>
+        <button className="btn btn-g" onClick={()=>setModal({open:true,data:i})}>Edit</button>
+      </div>
+    </div>)}
     {modal.open&&<Modal title={modal.data.docNo} onClose={()=>setModal({open:false})}>
-      <Field label="Client Name"><input value={modal.data.toName||""} onChange={e=>setModal({...modal,data:{...modal.data,toName:e.target.value}})} /></Field>
-      <Field label="Amount"><input type="number" value={modal.data.total||""} onChange={e=>setModal({...modal,data:{...modal.data,total:e.target.value}})} /></Field>
-      <button className="btn btn-p" onClick={()=>{const n=modal.data.id?list.map(x=>x.id===modal.data.id?modal.data:x):[...list,{...modal.data,id:uid()}];updateDB({accountingInvoices:n});setModal({open:false})}} style={{width:'100%'}}>Save Invoice</button>
-    </Modal>}</div>;
+      <Field label="Client / School"><input value={modal.data.toName||""} onChange={e=>setModal({...modal,data:{...modal.data,toName:e.target.value}})} /></Field>
+      <Field label="Total Amount"><input type="number" value={modal.data.total||""} onChange={e=>setModal({...modal,data:{...modal.data,total:e.target.value}})} /></Field>
+      <Field label="Status"><select value={modal.data.status} onChange={e=>setModal({...modal,data:{...modal.data,status:e.target.value}})}><option>Draft</option><option>Sent</option><option>Paid</option></select></Field>
+      <button className="btn btn-p" onClick={save} style={{width:'100%'}}>Save Invoice</button>
+    </Modal>}
+  </div>;
 }
 
-// --- MAIN APP ---
+function Reports(){
+  const {db}=useContext(AppDataContext);
+  const stats = useMemo(()=>{
+    const p = db.payments||[];
+    const e = db.expenses||[];
+    const pr = db.purchases||[];
+    const totalRev = p.filter(x=>x.status==='paid').reduce((a,b)=>a+parseFloat(b.amount||0),0);
+    const totalExp = e.reduce((a,b)=>a+parseFloat(b.amount||0),0) + pr.reduce((a,b)=>a+parseFloat(b.amount||0),0);
+    return { rev: totalRev, exp: totalExp, net: totalRev - totalExp };
+  },[db]);
+
+  return <div>
+    <h2>Financial Report</h2>
+    <div className="card" style={{marginTop:20}}>
+      <table style={{marginTop:10}}>
+        <tbody>
+          <tr><td>Total Revenue (Paid Registrations)</td><td style={{textAlign:'right',fontWeight:700,color:'var(--accent)'}}>{fmt(stats.rev)}</td></tr>
+          <tr><td>Total Expenses (Purchases & Operational)</td><td style={{textAlign:'right',fontWeight:700,color:'#ef4444'}}>- {fmt(stats.exp)}</td></tr>
+          <tr style={{fontSize:18,fontWeight:900}}><td>Net Profit / Loss</td><td style={{textAlign:'right'}}>{fmt(stats.net)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>;
+}
+
+function Settings(){
+  const {db,updateDB}=useContext(AppDataContext);
+  const [form,setForm]=useState({...db.settings});
+  const save=()=>{updateDB({settings:form});alert("Settings saved!");};
+  return <div>
+    <h2>Settings</h2>
+    <div className="card" style={{marginTop:20}}>
+      <Field label="Company Name"><input value={form.companyName} onChange={e=>setForm({...form,companyName:e.target.value})} /></Field>
+      <Field label="TIN Number"><input value={form.tin} onChange={e=>setForm({...form,tin:e.target.value})} /></Field>
+      <Field label="Address"><textarea value={form.address} onChange={e=>setForm({...form,address:e.target.value})} /></Field>
+      <button className="btn btn-p" onClick={save}>Save Changes</button>
+    </div>
+    <div className="card" style={{marginTop:20}}>
+      <h3>Database</h3>
+      <p style={{fontSize:12,color:'var(--muted)',marginBottom:10}}>Download a local copy of all records.</p>
+      <button className="btn btn-g" onClick={()=>{
+        const blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a');a.href=url;a.download=`HD_Backup_${new Date().toISOString().slice(0,10)}.json`;a.click();
+      }}>Export JSON Backup</button>
+    </div>
+  </div>;
+}
+
+// --- APP ---
 function App(){
   const {db}=useContext(AppDataContext);
   const [user,setUser]=useState(null);
@@ -236,30 +436,43 @@ function App(){
     });
   },[]);
 
-  if(!ready)return <div style={{padding:100,textAlign:'center'}}>🦕 Loading...</div>;
+  if(!ready)return <div style={{padding:100,textAlign:'center'}}>🦕 Loading System...</div>;
   if(!user)return <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#f1f5f9'}}>
-    <div className="card" style={{width:320,textAlign:'center'}}><h1>Login</h1>
-    <input placeholder="Email" style={{margin:'10px 0'}} onChange={e=>setCred({...cred,e:e.target.value})} />
-    <input type="password" placeholder="Password" style={{marginBottom:20}} onChange={e=>setCred({...cred,p:e.target.value})} />
-    <button className="btn btn-p" style={{width:'100%'}} onClick={()=>window.HDFirebase.signInWithEmailAndPassword(window.HDFirebase.auth,cred.e,cred.p).catch(e=>alert(e.message))}>Login</button>
-    </div></div>;
+    <div className="card" style={{width:320,textAlign:'center'}}>
+      <h1 style={{color:'var(--accent)',marginBottom:10}}>Login</h1>
+      <Field label="Email"><input onChange={e=>setCred({...cred,e:e.target.value})} /></Field>
+      <Field label="Password"><input type="password" onChange={e=>setCred({...cred,p:e.target.value})} /></Field>
+      <button className="btn btn-p" style={{width:'100%',marginTop:10}} onClick={()=>window.HDFirebase.signInWithEmailAndPassword(window.HDFirebase.auth,cred.e,cred.p).catch(e=>alert(e.message))}>Login</button>
+    </div>
+  </div>;
 
-  const menu=[{id:"dashboard",l:"Dashboard",i:"🏠"},{id:"schools",l:"Schools",i:"🏫"},{id:"students",l:"Students",i:"🎒"},{id:"sessions",l:"Sessions",i:"📅"},{id:"purchases",l:"Purchases",i:"🧾"},{id:"invoices",l:"Invoices",i:"📄"}];
+  const menu=[
+    {id:"dashboard",l:"Dashboard",i:"🏠"},{id:"schools",l:"Schools",i:"🏫"},{id:"students",l:"Students",i:"🎒"},
+    {id:"campTypes",l:"Camp Types",i:"🦖"},{id:"sessions",l:"Sessions",i:"📅"},{id:"crew",l:"Crew",i:"👥"},
+    {id:"inventory",l:"Inventory",i:"📦"},{id:"purchases",l:"Purchases",i:"🧾"},{id:"invoices",l:"Invoices",i:"📄"},
+    {id:"reports",l:"Reports",i:"📊"},{id:"settings",l:"Settings",i:"⚙️"}
+  ];
+
   return <div style={{display:'flex',minHeight:'100vh'}}>
-    <aside style={{width:220,background:'#1e293b',color:'#fff',padding:20,position:'sticky',top:0,height:'100vh'}}>
-      <h2 style={{color:'var(--accent)',marginBottom:30}}>🦕 Happy Dino</h2>
-      <nav style={{display:'flex',flexDirection:'column',gap:5}}>
-        {menu.map(m=><button key={m.id} onClick={()=>setPage(m.id)} style={{...btn("ghost"),textAlign:'left',color:page===m.id?'var(--accent)':'#fff',background:page===m.id?'#334155':'transparent'}}>{m.i} {m.l}</button>)}
-        <button onClick={()=>window.HDFirebase.signOut(window.HDFirebase.auth)} className="btn btn-d" style={{marginTop:20}}>Logout</button>
+    <aside style={{width:240,background:'#1e293b',color:'#fff',padding:20,position:'sticky',top:0,height:'100vh',overflowY:'auto'}}>
+      <h2 style={{color:'var(--accent)',marginBottom:25,textAlign:'center'}}>🦕 Happy Dino</h2>
+      <nav style={{display:'flex',flexDirection:'column',gap:4}}>
+        {menu.map(m=><button key={m.id} onClick={()=>setPage(m.id)} className={`sidebar-btn ${page===m.id?'active':''}`}>{m.i} {m.l}</button>)}
+        <button onClick={()=>window.HDFirebase.signOut(window.HDFirebase.auth)} className="btn btn-d" style={{marginTop:20,width:'100%'}}>Logout</button>
       </nav>
     </aside>
-    <main style={{flex:1,padding:40}}>
+    <main style={{flex:1,padding:40,maxWidth:1000,margin:'0 auto'}}>
       {page==='dashboard'&&<Dashboard />}
       {page==='schools'&&<Schools />}
       {page==='students'&&<Students />}
+      {page==='campTypes'&&<CampTypes />}
       {page==='sessions'&&<Sessions />}
+      {page==='crew'&&<Crew />}
+      {page==='inventory'&&<Inventory />}
       {page==='purchases'&&<Purchases />}
       {page==='invoices'&&<Invoices />}
+      {page==='reports'&&<Reports />}
+      {page==='settings'&&<Settings />}
     </main>
   </div>;
 }
