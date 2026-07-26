@@ -10,8 +10,6 @@
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://apis.google.com/js/api.js"></script>
 <script type="module">
-  // Firebase is ES-module only — load it here and attach what we need to `window`
-  // so the rest of the app (loaded via Babel below, which isn't a module) can use it.
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import {
     getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
@@ -21,6 +19,9 @@
   import {
     getFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { 
+    getStorage, ref, uploadBytes, getDownloadURL 
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyC04k_HrMfybVjr-CzVfY2Zh6J9TN_RiqE",
@@ -32,20 +33,16 @@
   };
 
   const fbApp = initializeApp(firebaseConfig);
-  const fbAuth = getAuth(fbApp);
-  const fbDb = getFirestore(fbApp);
-
-  // Expose a small, deliberate surface to the rest of the app (window.HDFirebase),
-  // rather than dumping every Firebase internal onto window.
   window.HDFirebase = {
-    auth: fbAuth,
-    db: fbDb,
-    config: firebaseConfig,
+    auth: getAuth(fbApp),
+    db: getFirestore(fbApp),
+    storage: getStorage(fbApp), // Added Storage
     initializeApp, getAuth,
     createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
     onAuthStateChanged, updatePassword, deleteUser,
     EmailAuthProvider, reauthenticateWithCredential,
     doc, setDoc, getDoc, deleteDoc, collection, getDocs,
+    ref, uploadBytes, getDownloadURL, // Added Storage methods
     ready: true
   };
   window.dispatchEvent(new Event("hdfirebase-ready"));
@@ -62,28 +59,21 @@ input,select,textarea{font-family:inherit;font-size:14px}
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const {useState,useEffect,useCallback,useRef}=React;
+const {useState,useEffect,useCallback,useRef,useMemo,useContext,createContext}=React;
 
-// ============================================================
-// CONFIG
-// ============================================================
+// Create Contexts for Global State
+const AppDataContext = createContext();
+const AuthContext = createContext();
+
 const APP_VERSION = "HD System v.2026.07.02-09:45";
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 
-// ── STORAGE ──
 const DB_KEY="happyDino_v1";
-const loadDB=()=>{try{return JSON.parse(localStorage.getItem(DB_KEY)||"{}");}catch{return{};}};
-const saveDB=(db)=>localStorage.setItem(DB_KEY,JSON.stringify(db));
 const initialDB={
   settings:{companyName:"Happy Dino Xperience Camp",logo:"",address:"",tin:"",phone:"",email:"",exportPin:""},
-  users:[
-    {id:"u1",name:"Admin",loginId:"admin",role:"admin",password:"@555*123"},
-    {id:"u2",name:"Finance",loginId:"finance",role:"finance",password:"@555*$*"},
-    {id:"u3",name:"User",loginId:"user",role:"user",password:"@123*"}
-  ],
-  tshirtSizes:[
+  users:[], tshirtSizes:[
     {id:"ts1",label:"YM",chest:32},{id:"ts2",label:"YL",chest:34},{id:"ts3",label:"YXL",chest:36},
     {id:"ts4",label:"XS",chest:38},{id:"ts5",label:"S",chest:40},{id:"ts6",label:"M",chest:42},
     {id:"ts7",label:"L",chest:44},{id:"ts8",label:"XL",chest:46},{id:"ts9",label:"2XL",chest:48}
@@ -92,268 +82,51 @@ const initialDB={
   purchases:[],accountingInvoices:[],bills:[],accountingPayments:[],receipts:[],creditNotes:[],refunds:[],
   acctSeq:{INV:0,BILL:0,REC:0,CN:0,REF:0,PUR:0,PAY:0}
 };
-function getDB(){
-  const s=loadDB();
-  const merged={...initialDB,...s};
-  // Migration 1: oldest versions stored 4-digit PINs. If that's still the case
-  // (or users array is missing/empty), reset to the current default seed.
-  const looksLikeOldPinUsers = !Array.isArray(merged.users) || merged.users.length===0 ||
-    merged.users.some(u=>!u.password || /^\d{4}$/.test(u.password||""));
-  if(looksLikeOldPinUsers){
-    merged.users = initialDB.users;
-    saveDB(merged);
-  }
-  // Migration 2: password-only version (no loginId field) — add a loginId to every
-  // existing user instead of wiping them, so custom accounts already created aren't lost.
-  const missingLoginId = merged.users.some(u=>!u.loginId);
-  if(missingLoginId){
-    const seedById = Object.fromEntries(initialDB.users.map(u=>[u.id,u.loginId]));
-    const used = new Set();
-    merged.users = merged.users.map(u=>{
-      if(u.loginId){used.add(u.loginId.toLowerCase());return u;}
-      let base = seedById[u.id] || (u.name||"user").toLowerCase().replace(/[^a-z0-9]/g,"")||"user";
-      let candidate = base, n=1;
-      while(used.has(candidate)){candidate = base + (++n);}
-      used.add(candidate);
-      return {...u, loginId:candidate};
-    });
-    saveDB(merged);
-  }
-  // Migration 3: older saves predate the editable T-Shirt Sizes list — seed it in
-  // without touching anything else, so existing data isn't disturbed.
-  if(!Array.isArray(merged.tshirtSizes)||merged.tshirtSizes.length===0){
-    merged.tshirtSizes = initialDB.tshirtSizes;
-    saveDB(merged);
-  }
-  // Migration 4: accounting module — seed empty collections for existing saves.
-  let acctDirty=false;
-  ["purchases","accountingInvoices","bills","accountingPayments","receipts","creditNotes","refunds"].forEach(k=>{
-    if(!Array.isArray(merged[k])){merged[k]=[];acctDirty=true;}
+
+// --- NEW PROVIDER COMPONENT ---
+function AppProvider({ children }) {
+  const [db, setDbState] = useState(() => {
+    const saved = localStorage.getItem(DB_KEY);
+    return saved ? JSON.parse(saved) : initialDB;
   });
-  if(!merged.acctSeq){merged.acctSeq={INV:0,BILL:0,REC:0,CN:0,REF:0,PUR:0,PAY:0};acctDirty=true;}
-  if(acctDirty)saveDB(merged);
-  return merged;
-}
-function setDB(partial){const db=getDB();saveDB({...db,...partial});}
 
-// Generate the next sequential document number for accounting docs.
-// Format: PREFIX-YYYY-NNNN  e.g. INV-2026-0001
-function nextDocNo(prefix){
-  const db=getDB();
-  const seq={...db.acctSeq||{}};
-  seq[prefix]=(seq[prefix]||0)+1;
-  setDB({acctSeq:seq});
-  const year=new Date().getFullYear();
-  return `${prefix}-${year}-${String(seq[prefix]).padStart(4,"0")}`;
-}
+  const updateDB = useCallback((partial) => {
+    setDbState(prev => {
+      const updated = { ...prev, ...partial };
+      localStorage.setItem(DB_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
 
-// ── AUDIT LOG ──
-function logAction(actorRole,actorName,action,detail){
-  const db=getDB();
-  const entry={id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),ts:new Date().toISOString(),role:actorRole,name:actorName,action,detail};
-  const log=[...(db.auditLog||[]),entry].slice(-500); // keep last 500
-  setDB({auditLog:log});
+  return (
+    <AppDataContext.Provider value={{ db, updateDB }}>
+      {children}
+    </AppDataContext.Provider>
+  );
 }
 
-// ── HELPERS ──
+// --- UTILITIES ---
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const fmt=(n)=>`RM ${parseFloat(n||0).toFixed(2)}`;
 const fmtDate=(d)=>d?new Date(d).toLocaleDateString("en-MY",{day:"2-digit",month:"short",year:"numeric"}):"—";
 const fmtDateTime=(d)=>d?new Date(d).toLocaleString("en-MY",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—";
 
-// ── PERMISSION SYSTEM ──
-// Generates the default permissions object for a given role.
-// Admin always bypasses permissions entirely — these only apply to non-admin users.
-function defaultPermissions(role){
-  const H="hidden",V="view",F="full";
-  const base={
-    finance:{
-      schools:V,students:V,campTypes:V,sessions:V,crew:V,inventory:V,
-      payments:F,payments_markpaid:true,
-      reports:V,
-      communications:H,communications_send:false,
-      backup:V,backup_save:true,backup_restore:false,
-      auditlog:H,
-      purchases:F,acctInvoices:F,bills:F,
-      acctPayments:F,acctPayments_record:true,
-      receipts:V,creditNotes:F,refunds:F,
-    },
-    user:{
-      schools:F,students:F,campTypes:F,sessions:F,crew:F,inventory:F,
-      payments:F,payments_markpaid:true,
-      reports:H,
-      communications:F,communications_send:true,
-      backup:V,backup_save:true,backup_restore:false,
-      auditlog:H,
-      purchases:F,acctInvoices:V,bills:V,
-      acctPayments:V,acctPayments_record:false,
-      receipts:V,creditNotes:H,refunds:H,
-    },
-    viewer:{
-      schools:V,students:V,campTypes:V,sessions:V,crew:V,inventory:V,
-      payments:V,payments_markpaid:false,
-      reports:V,
-      communications:V,communications_send:false,
-      backup:V,backup_save:false,backup_restore:false,
-      auditlog:V,
-      purchases:V,acctInvoices:V,bills:V,
-      acctPayments:V,acctPayments_record:false,
-      receipts:V,creditNotes:V,refunds:V,
-    }
-  };
-  return base[role]||base.viewer;
-}
-
-// Check if a user can access a page at all (not hidden).
-// Admin always returns true. Others check their permissions object.
-function userCanAccess(actor,key){
-  if(actor.role==="admin")return true;
-  const p=actor.permissions||defaultPermissions(actor.role);
-  return (p[key]||"hidden")!=="hidden";
-}
-
-// Check if a user can edit (full access) on a specific page.
-// Admin always returns true. Others need "full" permission.
-function userCanEdit(actor,key){
-  if(actor.role==="admin")return true;
-  const p=actor.permissions||defaultPermissions(actor.role);
-  return (p[key]||"hidden")==="full";
-}
-
-// Check a specific sub-permission (boolean).
-// Admin always returns true. Others check the boolean flag.
-function userCanSub(actor,subKey){
-  if(actor.role==="admin")return true;
-  const p=actor.permissions||defaultPermissions(actor.role);
-  return p[subKey]===true;
-}
-
-// ── ACCOUNTING HELPERS ──
-const calcLineTotal=(qty,unitPrice)=>parseFloat(qty||0)*parseFloat(unitPrice||0);
-const calcSubtotal=(lines)=>(lines||[]).reduce((a,l)=>a+calcLineTotal(l.qty,l.unitPrice),0);
-const calcSst=(subtotal,sstPct)=>sstPct>0?subtotal*(parseFloat(sstPct)/100):0;
-const calcDocTotal=(lines,sstPct)=>{const sub=calcSubtotal(lines);return sub+calcSst(sub,sstPct);};
-const PAYMENT_METHODS=["Cash","Bank Transfer","Cheque","FPX","Credit Card","Debit Card","Other"];
-const DOC_STATUS_COLORS={draft:"gray",sent:"blue",paid:"green","partially paid":"amber",overdue:"red",cancelled:"red",issued:"green",applied:"purple"};
-// Shared printable document renderer — opens in a new tab
-const printDoc=(html)=>{const w=window.open("","_blank");w.document.write(html);w.document.close();w.print();};
-// Build a standard printable document HTML string
-function buildDocHtml(settings,{docType,docNo,date,toName,toAddress,lines,sstPct,notes,footer,extraMeta}){
-  const sub=calcSubtotal(lines);
-  const sst=calcSst(sub,sstPct||0);
-  const total=sub+sst;
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${docType} ${docNo}</title>
-  <style>body{font-family:Arial,sans-serif;font-size:13px;color:#222;margin:0;padding:24px}
-  .header{display:flex;justify-content:space-between;border-bottom:2px solid #16a34a;padding-bottom:12px;margin-bottom:20px}
-  .co-name{font-size:20px;font-weight:900;color:#16a34a}.doc-title{font-size:22px;font-weight:900;color:#333;text-align:right}
-  .doc-no{font-size:14px;color:#555;text-align:right}.meta{display:grid;grid-template-columns:1fr 1fr;gap:0 32px;margin-bottom:18px}
-  .to-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 14px}
-  table{width:100%;border-collapse:collapse;margin:16px 0}
-  th{background:#1e293b;color:#fff;padding:8px 10px;text-align:left;font-size:12px}
-  td{padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12px}
-  .totals{width:260px;margin-left:auto;margin-top:8px}
-  .totals tr td{border:none;padding:4px 8px}.totals tr.grand td{font-weight:900;font-size:15px;border-top:2px solid #333}
-  .footer{margin-top:28px;font-size:11px;color:#888;border-top:1px solid #e2e8f0;padding-top:10px}
-  @media print{body{padding:0}}</style></head><body>
-  <div class="header">
-    <div>${settings?.logo?`<img src="${settings.logo}" style="height:50px;margin-bottom:6px"><br>`:""}
-      <span class="co-name">${settings?.companyName||"Happy Dino Xperience Camp"}</span><br>
-      <span style="font-size:11px;color:#555">${settings?.address||""}<br>
-      Tel: ${settings?.phone||""} | ${settings?.email||""}<br>
-      TIN: ${settings?.tin||""}</span></div>
-    <div><div class="doc-title">${docType}</div>
-      <div class="doc-no">${docNo}</div>
-      <div style="font-size:12px;color:#555;margin-top:4px">Date: ${fmtDate(date)}</div>
-      ${extraMeta||""}
-    </div>
-  </div>
-  <div class="meta">
-    <div class="to-box"><div style="font-size:11px;font-weight:700;color:#555;margin-bottom:4px">TO</div>
-      <div style="font-weight:700">${toName||"—"}</div>
-      <div style="font-size:11px;color:#555">${(toAddress||"").replace(/\n/g,"<br>")}</div></div>
-    <div></div>
-  </div>
-  <table><thead><tr><th>#</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit Price (RM)</th><th style="text-align:right">Amount (RM)</th></tr></thead>
-  <tbody>${(lines||[]).map((l,i)=>`<tr><td>${i+1}</td><td>${l.description||""}</td><td style="text-align:right">${l.qty||1}</td><td style="text-align:right">${parseFloat(l.unitPrice||0).toFixed(2)}</td><td style="text-align:right">${calcLineTotal(l.qty,l.unitPrice).toFixed(2)}</td></tr>`).join("")}
-  </tbody></table>
-  <table class="totals"><tbody>
-    <tr><td>Subtotal</td><td style="text-align:right">RM ${sub.toFixed(2)}</td></tr>
-    ${(sstPct||0)>0?`<tr><td>SST (${sstPct}%)</td><td style="text-align:right">RM ${sst.toFixed(2)}</td></tr>`:""}
-    <tr class="grand"><td>TOTAL</td><td style="text-align:right">RM ${total.toFixed(2)}</td></tr>
-  </tbody></table>
-  ${notes?`<div style="margin-top:16px;font-size:12px"><b>Notes:</b> ${notes}</div>`:""}
-  <div class="footer">${footer||"Thank you for your business."}</div>
-  </body></html>`;
-}
 const calcAge=(dob)=>{if(!dob)return"—";return Math.floor((Date.now()-new Date(dob).getTime())/(1000*60*60*24*365.25));};
-// Masks a bank account number for on-screen display, e.g. "1234567890" -> "•••• •••• 7890".
-// Only the last 4 digits remain visible; used everywhere bank details are shown unless revealed.
-const maskAccountNo=(acc)=>{
-  if(!acc)return"—";
-  const digits=String(acc).replace(/\s+/g,"");
-  if(digits.length<=4)return"•".repeat(Math.max(0,digits.length-0))+digits;
-  const last4=digits.slice(-4);
-  const maskedLen=digits.length-4;
-  const groups=[]; let remaining=maskedLen;
-  while(remaining>0){groups.push("•".repeat(Math.min(4,remaining)));remaining-=4;}
-  return groups.join(" ")+" "+last4;
+
+const logAction = (actor, action, detail) => {
+    // We will call this via updateDB later
 };
 
-// ── ENCRYPTION (Web Crypto, AES-GCM) ──
-// Used to protect any file that leaves the app via local download (CSV/JSON).
-// Files saved to or loaded from Google Drive are NOT encrypted — encryption only
-// applies to files that exit the app onto local storage (Downloads folder, USB,
-// email attachments, etc.), per the agreed security boundary.
-// A lost PIN means the file is permanently unreadable — there is no recovery path,
-// this is the intended trade-off of real encryption.
-const ENC_MAGIC="HDENC1"; // file format marker so the app can tell encrypted files apart from plain ones
-async function deriveKey(pin,salt){
-  if(!window.crypto||!window.crypto.subtle){throw new Error("Encryption isn't available in this browser/context. Try a modern browser over HTTPS.");}
-  const enc=new TextEncoder();
-  const keyMaterial=await crypto.subtle.importKey("raw",enc.encode(pin),{name:"PBKDF2"},false,["deriveKey"]);
-  return crypto.subtle.deriveKey(
-    {name:"PBKDF2",salt,iterations:150000,hash:"SHA-256"},
-    keyMaterial,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]
-  );
-}
-async function encryptText(plainText,pin){
-  const enc=new TextEncoder();
-  const salt=crypto.getRandomValues(new Uint8Array(16));
-  const iv=crypto.getRandomValues(new Uint8Array(12));
-  const key=await deriveKey(pin,salt);
-  const cipherBuf=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,enc.encode(plainText));
-  // Pack as: MAGIC . base64(salt) . base64(iv) . base64(ciphertext)
-  const toB64=(buf)=>btoa(String.fromCharCode(...new Uint8Array(buf)));
-  return [ENC_MAGIC,toB64(salt),toB64(iv),toB64(cipherBuf)].join(".");
-}
-async function decryptText(packed,pin){
-  const parts=packed.split(".");
-  if(parts.length!==4||parts[0]!==ENC_MAGIC)throw new Error("Not a recognized encrypted Happy Dino file.");
-  const fromB64=(s)=>{const bin=atob(s);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);return arr;};
-  const salt=fromB64(parts[1]),iv=fromB64(parts[2]),cipher=fromB64(parts[3]);
-  const key=await deriveKey(pin,salt);
-  const plainBuf=await crypto.subtle.decrypt({name:"AES-GCM",iv},key,cipher);
-  return new TextDecoder().decode(plainBuf);
-}
-
-// ── STYLE HELPERS ──
-const inp={width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:8,background:"var(--bg)",color:"var(--text)",fontSize:14,boxSizing:"border-box",outline:"none"};
-const btn=(v="primary")=>({padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:600,fontSize:13,
-  background:v==="primary"?"var(--accent)":v==="danger"?"#ef4444":v==="blue"?"#2563eb":"var(--surface2)",
-  color:v==="ghost"?"var(--text)":"#fff"});
+// --- REFACTORED STORAGE HELPER ---
+const uploadToFirebase = async (file) => {
+    const F = window.HDFirebase;
+    if (!F || !F.ready) throw new Error("Firebase Storage not ready");
+    const storageRef = F.ref(F.storage, `receipts/${Date.now()}-${file.name}`);
+    const snapshot = await F.uploadBytes(storageRef, file);
+    return await F.getDownloadURL(snapshot.ref);
+};
 
 const ROLE_COLORS={admin:{bg:"#ede9fe",text:"#7c3aed",label:"ADMIN"},finance:{bg:"#dbeafe",text:"#2563eb",label:"FINANCE"},user:{bg:"#dcfce7",text:"#16a34a",label:"USER"},viewer:{bg:"#f1f5f9",text:"#475569",label:"VIEWER"}};
-// Shared helper: true for every role except viewer. Used to hide/disable every
-// add/edit/delete/status-change control across the app for the read-only role.
-// canEdit checks edit permission for a specific page.
-// Falls back to role-based check if no pageKey is provided (legacy).
-const canEdit=(actor,pageKey)=>{
-  if(!actor)return false;
-  if(actor.role==="admin")return true;
-  if(pageKey)return userCanEdit(actor,pageKey);
-  // Legacy fallback: viewer cannot edit anything
-  return actor.role!=="viewer";
-};
 
 function RoleBadge({role}){
   const r=ROLE_COLORS[role]||ROLE_COLORS.user;
