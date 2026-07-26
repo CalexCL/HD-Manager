@@ -2194,98 +2194,157 @@ function DocStatusBadge({status}){
   return <Badge label={status||"—"} color={color}/>;
 }
 
-// ── ACCOUNTING: PURCHASES ──
-function Purchases({db,refresh,actor,onHome}){
-  const [showModal,setShowModal]=useState(false);
-  const [editing,setEditing]=useState(null);
-  const [form,setForm]=useState({});
-  const [preview,setPreview]=useState(null);
-  const purchases=db.purchases||[];
-  const editable=canEdit(actor,"purchases")||actor.role==="finance";
-  const blank=()=>({id:uid(),docNo:nextDocNo("PUR"),date:new Date().toISOString().slice(0,10),supplier:"",category:"Materials",description:"",amount:"",sessionId:"",notes:"",photo:""});
-  const openAdd=()=>{setForm(blank());setEditing(null);setShowModal(true);};
-  const openEdit=(p)=>{setForm({...p});setEditing(p.id);setShowModal(true);};
-  const save=()=>{
-    const list=editing?purchases.map(p=>p.id===editing?form:p):[...purchases,form];
-    setDB({purchases:list});logAction(actor.role,actor.name,editing?"EDIT_PURCHASE":"ADD_PURCHASE",form.docNo);
-    refresh();setShowModal(false);
+// ── ACCOUNTING: PURCHASES (REFACTORED FOR FIREBASE STORAGE) ──
+function Purchases({onHome}) {
+  const { db, updateDB } = useContext(AppDataContext);
+  const { user } = useContext(AuthContext); 
+  
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({});
+  const [preview, setPreview] = useState(null);
+  const [tempFile, setTempFile] = useState(null); 
+  const [busy, setBusy] = useState(false);
+
+  const purchases = db.purchases || [];
+  const editable = (user.role === "admin" || user.role === "finance");
+
+  const openAdd = () => {
+    setForm({
+      id: uid(),
+      docNo: nextDocNo("PUR"),
+      date: new Date().toISOString().slice(0, 10),
+      supplier: "",
+      category: "Materials",
+      description: "",
+      amount: "",
+      sessionId: "",
+      notes: "",
+      photo: ""
+    });
+    setEditing(null);
+    setTempFile(null);
+    setShowModal(true);
   };
-  const del=(id)=>{if(!window.confirm("Delete purchase record?"))return;
-    setDB({purchases:purchases.filter(p=>p.id!==id)});refresh();};
-  const handlePhoto=(e)=>{const file=e.target.files[0];if(!file)return;
-    const reader=new FileReader();reader.onload=ev=>setForm({...form,photo:ev.target.result});reader.readAsDataURL(file);};
-  const cats=["Materials","Equipment","Services","Utilities","Transport","Meals","Others"];
-  const total=purchases.reduce((a,p)=>a+parseFloat(p.amount||0),0);
-  return <div>
-    <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Accounting","Purchases"]} onHome={onHome} title="Purchases"
-      action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Add Purchase</button>}/>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-      <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px"}}>
-        <div style={{fontSize:11,color:"var(--muted)"}}>Total Purchases</div>
-        <div style={{fontWeight:800,fontSize:20,color:"var(--accent)"}}>RM {total.toFixed(2)}</div>
+
+  const openEdit = (p) => {
+    setForm({ ...p });
+    setEditing(p.id);
+    setTempFile(null);
+    setShowModal(true);
+  };
+
+  const save = async () => {
+    if (busy) return;
+    if (!form.supplier || !form.amount) { alert("Please fill in Supplier and Amount."); return; }
+    setBusy(true);
+    
+    try {
+      let finalPhotoUrl = form.photo || "";
+
+      // Upload to Firebase Storage if a new file is chosen
+      if (tempFile) {
+        finalPhotoUrl = await uploadToFirebase(tempFile);
+      }
+
+      const newRecord = { ...form, photo: finalPhotoUrl };
+      const updatedList = editing 
+        ? purchases.map(p => p.id === editing ? newRecord : p)
+        : [...purchases, newRecord];
+
+      updateDB({ purchases: updatedList });
+      
+      setShowModal(false);
+    } catch (err) {
+      alert("Error saving to Firebase: " + err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const del = (id) => {
+    if (!window.confirm("Delete purchase record?")) return;
+    const filtered = purchases.filter(p => p.id !== id);
+    updateDB({ purchases: filtered });
+  };
+
+  const cats = ["Materials", "Equipment", "Services", "Utilities", "Transport", "Meals", "Others"];
+  const total = purchases.reduce((a, p) => a + parseFloat(p.amount || 0), 0);
+
+  return (
+    <div>
+      <PageHeader 
+        crumbs={[{label: "Dashboard", nav: onHome}, "Accounting", "Purchases"]} 
+        onHome={onHome} 
+        title="Purchases"
+        action={editable && <button onClick={openAdd} style={btn("primary")}>+ Add Purchase</button>}
+      />
+
+      <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14}}>
+        <div style={{background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 16px"}}>
+          <div style={{fontSize: 11, color: "var(--muted)"}}>Total Purchases</div>
+          <div style={{fontWeight: 800, fontSize: 20, color: "var(--accent)"}}>{fmt(total)}</div>
+        </div>
       </div>
-      <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 16px"}}>
-        <div style={{fontSize:11,color:"var(--muted)"}}>Records</div>
-        <div style={{fontWeight:800,fontSize:20}}>{purchases.length}</div>
-      </div>
+
+      {purchases.length === 0 ? <EmptyState icon="🧾" text="No purchase records yet." /> :
+      <div style={{display: "grid", gap: 8}}>
+        {[...purchases].reverse().map(p => (
+            <div key={p.id} style={{background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 16px"}}>
+              <div style={{display: "flex", justifyContent: "space-between", flexWrap:"wrap", gap: 8}}>
+                <div style={{flex: 1}}>
+                  <div style={{display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap"}}>
+                    <span style={{fontWeight: 700, fontSize: 13}}>{p.docNo}</span>
+                    <Badge label={p.category} color="blue" />
+                  </div>
+                  <div style={{fontSize: 13, marginTop: 4}}>{p.supplier} — {p.description}</div>
+                </div>
+                <div style={{display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6}}>
+                  <span style={{fontWeight: 800, fontSize: 15, color: "var(--accent)"}}>{fmt(p.amount)}</span>
+                  <div style={{display: "flex", gap: 6}}>
+                    {p.photo && <button onClick={() => setPreview(p.photo)} style={{...btn("ghost"), fontSize: 11, padding: "3px 8px"}}>📷 Receipt</button>}
+                    {editable && <button onClick={() => openEdit(p)} style={{...btn("ghost"), fontSize: 11, padding: "3px 8px"}}>Edit</button>}
+                    {editable && <button onClick={() => del(p.id)} style={{...btn("danger"), fontSize: 11, padding: "3px 8px"}}>Del</button>}
+                  </div>
+                </div>
+              </div>
+            </div>
+        ))}
+      </div>}
+
+      {preview && <Modal title="Receipt Photo" onClose={() => setPreview(null)}>
+        <img src={preview} style={{width: "100%", borderRadius: 8}} />
+      </Modal>}
+
+      {showModal && <Modal title={editing ? "Edit Purchase" : "New Purchase"} onClose={() => setShowModal(false)} wide>
+        <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 14px"}}>
+          <Field label="Document No"><input style={{...inp, background: "var(--surface2)", color: "var(--muted)"}} value={form.docNo || ""} readOnly /></Field>
+          <Field label="Date"><input type="date" style={inp} value={form.date || ""} onChange={e => setForm({...form, date: e.target.value})} /></Field>
+          <Field label="Supplier"><input style={inp} value={form.supplier || ""} onChange={e => setForm({...form, supplier: e.target.value})} /></Field>
+          <Field label="Category"><select style={inp} value={form.category || "Materials"} onChange={e => setForm({...form, category: e.target.value})}>
+            {cats.map(c => <option key={c}>{c}</option>)}</select></Field>
+          <Field label="Amount (RM)"><input type="number" style={inp} value={form.amount || ""} onChange={e => setForm({...form, amount: e.target.value})} /></Field>
+        </div>
+        <Field label="Description"><input style={inp} value={form.description || ""} onChange={e => setForm({...form, description: e.target.value})} /></Field>
+        
+        <Field label="Receipt Photo (Upload to Cloud)">
+          <input type="file" accept="image/*" onChange={e => setTempFile(e.target.files[0])} disabled={busy} />
+          {(tempFile || form.photo) && (
+            <div style={{marginTop: 10, fontSize: 11, color: "var(--muted)"}}>
+              {tempFile ? `Ready to upload: ${tempFile.name}` : "Image already saved in cloud storage"}
+            </div>
+          )}
+        </Field>
+
+        <div style={{display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 15}}>
+          <button onClick={() => setShowModal(false)} style={btn("ghost")} disabled={busy}>Cancel</button>
+          <button onClick={save} style={btn("primary")} disabled={busy}>
+            {busy ? "Uploading..." : "Save Purchase"}
+          </button>
+        </div>
+      </Modal>}
     </div>
-    {purchases.length===0?<EmptyState icon="🧾" text="No purchase records yet."/>:
-    <div style={{display:"grid",gap:8}}>
-      {[...purchases].reverse().map(p=>{
-        const sess=(db.sessions||[]).find(s=>s.id===p.sessionId);
-        const school=sess?(db.schools||[]).find(s=>s.id===sess.schoolId):null;
-        return <div key={p.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 16px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
-            <div style={{flex:1}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                <span style={{fontWeight:700,fontSize:13}}>{p.docNo}</span>
-                <Badge label={p.category} color="blue"/>
-                {sess&&<Badge label={school?.name||"Session"} color="purple"/>}
-              </div>
-              <div style={{fontSize:13,marginTop:4}}>{p.supplier} — {p.description}</div>
-              <div style={{fontSize:12,color:"var(--muted)"}}>{fmtDate(p.date)}{p.notes&&` · ${p.notes}`}</div>
-            </div>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
-              <span style={{fontWeight:800,fontSize:15,color:"var(--accent)"}}>RM {parseFloat(p.amount||0).toFixed(2)}</span>
-              <div style={{display:"flex",gap:6}}>
-                {p.photo&&<button onClick={()=>setPreview(p.photo)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>📷 View</button>}
-                {editable&&<button onClick={()=>openEdit(p)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Edit</button>}
-                {editable&&<button onClick={()=>del(p.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>Del</button>}
-              </div>
-            </div>
-          </div>
-        </div>;
-      })}
-    </div>}
-    {preview&&<Modal title="Receipt Photo" onClose={()=>setPreview(null)}>
-      <img src={preview} style={{width:"100%",borderRadius:8}}/>
-    </Modal>}
-    {showModal&&<Modal title={editing?"Edit Purchase":"New Purchase"} onClose={()=>setShowModal(false)} wide>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
-        <Field label="Document No"><input style={{...inp,background:"var(--surface2)",color:"var(--muted)"}} value={form.docNo||""} readOnly/></Field>
-        <Field label="Date"><input type="date" style={inp} value={form.date||""} onChange={e=>setForm({...form,date:e.target.value})}/></Field>
-        <Field label="Supplier / Vendor"><input style={inp} value={form.supplier||""} onChange={e=>setForm({...form,supplier:e.target.value})}/></Field>
-        <Field label="Category"><select style={inp} value={form.category||"Materials"} onChange={e=>setForm({...form,category:e.target.value})}>
-          {cats.map(c=><option key={c}>{c}</option>)}</select></Field>
-        <Field label="Amount (RM)"><input type="number" style={inp} value={form.amount||""} onChange={e=>setForm({...form,amount:e.target.value})}/></Field>
-        <Field label="Link to Session (optional)"><select style={inp} value={form.sessionId||""} onChange={e=>setForm({...form,sessionId:e.target.value})}>
-          <option value="">None</option>
-          {(db.sessions||[]).map(s=>{const sc=(db.schools||[]).find(x=>x.id===s.schoolId);const ct=(db.campTypes||[]).find(x=>x.id===s.campTypeId);
-            return <option key={s.id} value={s.id}>{fmtDate(s.date)} — {sc?.name||"?"} ({ct?.name||"?"})</option>;})}
-        </select></Field>
-      </div>
-      <Field label="Description"><input style={inp} value={form.description||""} onChange={e=>setForm({...form,description:e.target.value})}/></Field>
-      <Field label="Notes"><input style={inp} value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
-      <Field label="Receipt / Invoice Photo">
-        <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{fontSize:12,marginBottom:6}}/>
-        {form.photo&&<img src={form.photo} style={{width:"100%",maxHeight:200,objectFit:"contain",borderRadius:6,marginTop:6}}/>}
-      </Field>
-      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-        <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
-        <button onClick={save} style={btn("primary")}>Save</button>
-      </div>
-    </Modal>}
-  </div>;
+  );
 }
 
 // ── ACCOUNTING: INVOICES ──
