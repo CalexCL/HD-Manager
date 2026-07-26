@@ -245,7 +245,259 @@ function Purchases() {
   );
 }
 
-// --- MAIN APP COMPONENT ---
+// --- MODULE: CAMP TYPES ---
+function CampTypes() {
+  const { db, updateDB } = useContext(AppDataContext);
+  const [modal, setModal] = useState({ open: false, data: {} });
+  const list = db.campTypes || [];
+
+  const save = () => {
+    const updated = modal.data.id ? list.map(c => c.id === modal.data.id ? modal.data : s) : [...list, { ...modal.data, id: uid() }];
+    updateDB({ campTypes: updated });
+    setModal({ open: false, data: {} });
+  };
+
+  return (
+    <div>
+      <div style={{display:'flex', justifyContent:'space-between', marginBottom:20}}>
+        <h2>Camp Types</h2>
+        <button onClick={() => setModal({open:true, data:{discountable:true, sibling2Pct:10, sibling3Pct:20}})} style={btn()}>+ New Camp Type</button>
+      </div>
+      <div style={{display:'grid', gap:10}}>
+        {list.map(c => (
+          <div key={c.id} className="card" style={{display:'flex', justifyContent:'space-between'}}>
+            <div><strong>{c.name}</strong><div>Fee: {fmt(c.fee)} · Crew: {fmt(c.crewFee)}</div></div>
+            <button onClick={() => setModal({open:true, data:c})} style={btn("ghost")}>Edit</button>
+          </div>
+        ))}
+      </div>
+      {modal.open && <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100}}>
+        <div className="card" style={{width:450}}>
+          <h3>Camp Type Details</h3>
+          <div style={{marginTop:15, display:'grid', gap:10}}>
+            <label>Camp Name</label><input value={modal.data.name||""} onChange={e=>setModal({...modal, data:{...modal.data, name:e.target.value}})} />
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
+              <div><label>Fee (RM)</label><input type="number" value={modal.data.fee||""} onChange={e=>setModal({...modal, data:{...modal.data, fee:e.target.value}})} /></div>
+              <div><label>Crew Fee (RM)</label><input type="number" value={modal.data.crewFee||""} onChange={e=>setModal({...modal, data:{...modal.data, crewFee:e.target.value}})} /></div>
+            </div>
+          </div>
+          <div style={{display:'flex', gap:10, marginTop:20}}>
+            <button onClick={save} style={btn()}>Save</button>
+            <button onClick={() => setModal({open:false})} style={btn("ghost")}>Cancel</button>
+          </div>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+// --- MODULE: SESSIONS & ATTENDANCE ---
+function Sessions() {
+  const { db, updateDB } = useContext(AppDataContext);
+  const [modal, setModal] = useState({ open: false, data: {} });
+  const [selected, setSelected] = useState(null);
+  const list = db.sessions || [];
+
+  if (selected) return (
+    <div>
+      <button onClick={() => setSelected(null)} style={{...btn("ghost"), marginBottom:15}}>← Back to Sessions</button>
+      <h2>{db.schools.find(s=>s.id===selected.schoolId)?.name} Session</h2>
+      <p style={{color:'var(--muted)', marginBottom:20}}>{fmtDate(selected.date)}</p>
+      
+      {/* Attendance Simple View */}
+      <div className="card">
+        <h3>Attendance</h3>
+        <div style={{marginTop:15}}>
+          {(db.registrations || []).filter(r => r.sessionId === selected.id).map(r => {
+            const st = db.students.find(s => s.id === r.studentId);
+            return (
+              <div key={r.id} style={{display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:'1px solid var(--border)'}}>
+                <span>{st?.name}</span>
+                <input type="checkbox" style={{width:20}} checked={r.present} onChange={() => {
+                  const updated = db.registrations.map(reg => reg.id === r.id ? {...reg, present: !reg.present} : reg);
+                  updateDB({ registrations: updated });
+                }} />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{display:'flex', justifyContent:'space-between', marginBottom:20}}>
+        <h2>Camp Sessions</h2>
+        <button onClick={() => setModal({open:true, data:{status:'scheduled'}})} style={btn()}>+ New Session</button>
+      </div>
+      <div style={{display:'grid', gap:10}}>
+        {list.map(s => {
+          const sch = db.schools.find(x => x.id === s.schoolId);
+          const ct = db.campTypes.find(x => x.id === s.campTypeId);
+          return (
+            <div key={s.id} className="card" style={{display:'flex', justifyContent:'space-between', cursor:'pointer'}} onClick={() => setSelected(s)}>
+              <div>
+                <strong>{sch?.name}</strong>
+                <div style={{fontSize:12, color:'var(--muted)'}}>{ct?.name} · {fmtDate(s.date)}</div>
+              </div>
+              <Badge label={s.status} color={s.status === 'completed' ? 'green' : 'amber'} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// --- MODULE: CREW ---
+function Crew() {
+  const { db, updateDB } = useContext(AppDataContext);
+  const [modal, setModal] = useState({ open: false, data: {} });
+  const list = db.crew || [];
+
+  return (
+    <div>
+      <div style={{display:'flex', justifyContent:'space-between', marginBottom:20}}>
+        <h2>Crew Members</h2>
+        <button onClick={() => setModal({open:true, data:{rating:3}})} style={btn()}>+ Add Crew</button>
+      </div>
+      <div style={{display:'grid', gap:10}}>
+        {list.map(c => (
+          <div key={c.id} className="card" style={{display:'flex', justifyContent:'space-between'}}>
+            <div><strong>{c.name}</strong><div>{c.phone} · Rating: {c.rating}/5</div></div>
+            <button onClick={() => setModal({open:true, data:c})} style={btn("ghost")}>Edit</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- MODULE: INVENTORY ---
+function Inventory() {
+  const { db, updateDB } = useContext(AppDataContext);
+  const [modal, setModal] = useState({ open: false, data: {} });
+  const list = db.inventory || [];
+
+  return (
+    <div>
+      <div style={{display:'flex', justifyContent:'space-between', marginBottom:20}}>
+        <h2>Inventory</h2>
+        <button onClick={() => setModal({open:true, data:{qty:0}})} style={btn()}>+ Add Item</button>
+      </div>
+      <div style={{display:'grid', gap:10}}>
+        {list.map(i => (
+          <div key={i.id} className="card" style={{display:'flex', justifyContent:'space-between'}}>
+            <div><strong>{i.name}</strong><div>Stock: {i.qty} {i.unit}</div></div>
+            <div style={{display:'flex', gap:5}}>
+               <button onClick={() => {
+                 const updated = list.map(x => x.id === i.id ? {...x, qty: Math.max(0, x.qty - 1)} : x);
+                 updateDB({ inventory: updated });
+               }} style={btn("ghost")}>-</button>
+               <button onClick={() => {
+                 const updated = list.map(x => x.id === i.id ? {...x, qty: x.qty + 1} : x);
+                 updateDB({ inventory: updated });
+               }} style={btn("ghost")}>+</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- MODULE: ACCOUNTING SUITE (INVOICES & BILLS) ---
+function AccountingSuite() {
+  const { db, updateDB, nextDocNo } = useContext(AppDataContext);
+  const [tab, setTab] = useState("invoices");
+  const [modal, setModal] = useState({ open: false, data: {} });
+  const list = tab === "invoices" ? (db.accountingInvoices || []) : (db.bills || []);
+
+  const save = () => {
+    const key = tab === "invoices" ? "accountingInvoices" : "bills";
+    const updated = modal.data.id ? db[key].map(i => i.id === modal.data.id ? modal.data : i) : [...(db[key] || []), { ...modal.data, id: uid() }];
+    updateDB({ [key]: updated });
+    setModal({ open: false, data: {} });
+  };
+
+  return (
+    <div>
+      <div style={{display:'flex', gap:10, marginBottom:20}}>
+        <button onClick={() => setTab("invoices")} style={btn(tab === "invoices" ? "primary" : "ghost")}>Invoices</button>
+        <button onClick={() => setTab("bills")} style={btn(tab === "bills" ? "primary" : "ghost")}>Bills</button>
+      </div>
+      <PageHeader title={tab === "invoices" ? "Client Invoices" : "Supplier Bills"} action={<button onClick={() => setModal({open:true, data:{ docNo: nextDocNo(tab === "invoices" ? "INV" : "BILL"), date: new Date().toISOString().slice(0,10), status: 'Draft', lines: [] }})} style={btn()}>+ New {tab === "invoices" ? "Invoice" : "Bill"}</button>} />
+      <div style={{display:'grid', gap:10}}>
+        {list.map(i => <div key={i.id} className="card" style={{display:'flex', justifyContent:'space-between'}}>
+          <div><strong>{i.docNo}</strong><div>{i.toName} · {i.status}</div></div>
+          <button onClick={() => setModal({open:true, data:i})} style={btn("ghost")}>Edit</button>
+        </div>)}
+      </div>
+    </div>
+  );
+}
+
+// --- MODULE: REPORTS ---
+function Reports() {
+  const { db } = useContext(AppDataContext);
+  const rev = (db.payments || []).filter(p => p.status === 'paid').reduce((a, p) => a + parseFloat(p.amount || 0), 0);
+  const exp = (db.expenses || []).reduce((a, e) => a + parseFloat(e.amount || 0), 0);
+  const pur = (db.purchases || []).reduce((a, p) => a + parseFloat(p.amount || 0), 0);
+
+  return (
+    <div>
+      <h2>Financial Reports</h2>
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:20, marginTop:20}}>
+        <div className="card"><h4>Revenue</h4><div style={{fontSize:20, fontWeight:800, color:'var(--accent)'}}>{fmt(rev)}</div></div>
+        <div className="card"><h4>Expenses</h4><div style={{fontSize:20, fontWeight:800, color:'#ef4444'}}>{fmt(exp + pur)}</div></div>
+        <div className="card"><h4>Net Profit</h4><div style={{fontSize:20, fontWeight:800}}>{fmt(rev - (exp + pur))}</div></div>
+      </div>
+    </div>
+  );
+}
+
+// --- MODULE: BACKUP & SETTINGS ---
+function SettingsModule() {
+  const { db, updateDB } = useContext(AppDataContext);
+  const [form, setForm] = useState({ ...db.settings });
+
+  const save = () => {
+    updateDB({ settings: form });
+    alert("Settings Saved");
+  };
+
+  const downloadBackup = () => {
+    const data = JSON.stringify(db, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `HappyDino_Backup_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+  };
+
+  return (
+    <div>
+      <h2>Settings</h2>
+      <div className="card" style={{marginTop:20}}>
+        <h3>Company Details</h3>
+        <div style={{marginTop:15, display:'grid', gap:10}}>
+          <label>Company Name</label><input value={form.companyName||""} onChange={e=>setForm({...form, companyName:e.target.value})} />
+          <label>Address</label><input value={form.address||""} onChange={e=>setForm({...form, address:e.target.value})} />
+          <button onClick={save} style={btn()}>Save Settings</button>
+        </div>
+      </div>
+      <div className="card" style={{marginTop:20}}>
+        <h3>Database Backup</h3>
+        <p style={{fontSize:12, color:'var(--muted)', marginBottom:15}}>Download a full copy of your data to your computer.</p>
+        <button onClick={downloadBackup} style={btn("ghost")}>Download JSON Backup</button>
+      </div>
+    </div>
+  );
+}
+
+// --- MAIN APP COMPONENT (FINALIZED) ---
 function App() {
   const { user, ready } = useAuth();
   const { db } = useContext(AppDataContext);
@@ -266,15 +518,30 @@ function App() {
     </div>
   );
 
+  const menu = [
+    { id: "dashboard", label: "Dashboard", icon: "🏠" },
+    { id: "schools", label: "Schools", icon: "🏫" },
+    { id: "students", label: "Students", icon: "🎒" },
+    { id: "campTypes", label: "Camp Types", icon: "🦖" },
+    { id: "sessions", label: "Sessions", icon: "📅" },
+    { id: "crew", label: "Crew", icon: "👥" },
+    { id: "inventory", label: "Inventory", icon: "📦" },
+    { id: "purchases", label: "Accounting", icon: "🧾" },
+    { id: "suite", label: "Invoices/Bills", icon: "📄" },
+    { id: "reports", label: "Reports", icon: "📊" },
+    { id: "settings", label: "Settings", icon: "⚙️" },
+  ];
+
   return (
     <div style={{display:'flex', minHeight:'100vh'}}>
-      <aside style={{width:240, background:'#1e293b', color:'white', padding:20, position:'sticky', top:0, height:'100vh'}}>
+      <aside style={{width:240, background:'#1e293b', color:'white', padding:20, position:'sticky', top:0, height:'100vh', overflowY:'auto'}}>
         <h2 style={{color:'var(--accent)', marginBottom:30}}>🦕 Happy Dino</h2>
-        <nav style={{display:'flex', flexDirection:'column', gap:8}}>
-          <button onClick={() => setPage("dashboard")} style={{...btn("ghost"), color:'white', textAlign:'left'}}>🏠 Dashboard</button>
-          <button onClick={() => setPage("schools")} style={{...btn("ghost"), color:'white', textAlign:'left'}}>🏫 Schools</button>
-          <button onClick={() => setPage("students")} style={{...btn("ghost"), color:'white', textAlign:'left'}}>🎒 Students</button>
-          <button onClick={() => setPage("purchases")} style={{...btn("ghost"), color:'white', textAlign:'left'}}>🧾 Accounting</button>
+        <nav style={{display:'flex', flexDirection:'column', gap:4}}>
+          {menu.map(item => (
+            <button key={item.id} onClick={() => setPage(item.id)} style={{...btn("ghost"), color: page === item.id ? 'var(--accent)' : 'white', textAlign:'left', background: page === item.id ? '#334155' : 'transparent'}}>
+              {item.icon} {item.label}
+            </button>
+          ))}
           <button onClick={() => window.HDFirebase.signOut(window.HDFirebase.auth)} style={{...btn("danger"), marginTop:20}}>Logout</button>
         </nav>
       </aside>
@@ -284,11 +551,11 @@ function App() {
             <h1>Dashboard</h1>
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(200px, 1fr))', gap:20, marginTop:20}}>
               <div className="card" style={{borderLeft:'4px solid var(--accent)'}}>
-                <div style={{fontSize:12, color:'var(--muted)'}}>TOTAL REVENUE</div>
+                <div style={{fontSize:11, color:'var(--muted)'}}>PAID REVENUE</div>
                 <div style={{fontSize:24, fontWeight:800}}>{fmt((db.payments||[]).filter(p=>p.status==='paid').reduce((a,p)=>a+parseFloat(p.amount||0),0))}</div>
               </div>
               <div className="card" style={{borderLeft:'4px solid #2563eb'}}>
-                <div style={{fontSize:12, color:'var(--muted)'}}>TOTAL STUDENTS</div>
+                <div style={{fontSize:11, color:'var(--muted)'}}>STUDENTS</div>
                 <div style={{fontSize:24, fontWeight:800}}>{(db.students||[]).length}</div>
               </div>
             </div>
@@ -296,13 +563,19 @@ function App() {
         )}
         {page === "schools" && <Schools />}
         {page === "students" && <Students />}
+        {page === "campTypes" && <CampTypes />}
+        {page === "sessions" && <Sessions />}
+        {page === "crew" && <Crew />}
+        {page === "inventory" && <Inventory />}
         {page === "purchases" && <Purchases />}
+        {page === "suite" && <AccountingSuite />}
+        {page === "reports" && <Reports />}
+        {page === "settings" && <SettingsModule />}
       </main>
     </div>
   );
 }
 
-// --- RENDER ---
 ReactDOM.createRoot(document.getElementById("root")).render(<AppProvider><App /></AppProvider>);
 </script>
 </body>
