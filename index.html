@@ -51,12 +51,35 @@
   window.dispatchEvent(new Event("hdfirebase-ready"));
 </script>
 <style>
-:root{--accent:#16a34a;--bg:#f8fafc;--surface:#fff;--surface2:#f1f5f9;--border:#e2e8f0;--text:#1e293b;--muted:#64748b}
-@media(prefers-color-scheme:dark){:root{--bg:#0f172a;--surface:#1e293b;--surface2:#0f172a;--border:#334155;--text:#f1f5f9;--muted:#94a3b8}}
+/* ── NEON DARK THEME ── */
+:root{
+  --accent:#00e676;--accent2:#7c3aed;--accent3:#2563eb;
+  --bg:#070d1a;--surface:#0d1526;--surface2:#111c33;--surface3:#162040;
+  --border:#1e2d4a;--border2:#253657;
+  --text:#e8f0fe;--muted:#6b82a8;--muted2:#4a5f80;
+  --green:#00e676;--purple:#a855f7;--blue:#3b82f6;--amber:#f59e0b;--red:#ef4444;--cyan:#06b6d4;
+  --card-glow:0 0 20px rgba(0,230,118,0.06);
+  --sidebar-w:220px;--sidebar-w-collapsed:56px;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px}
-input,select,textarea{font-family:inherit;font-size:14px}
-::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:15px;min-height:100vh}
+input,select,textarea{font-family:inherit;font-size:15px;background:var(--surface2);color:var(--text);border:1px solid var(--border2);border-radius:8px;outline:none;transition:border-color 0.15s}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(0,230,118,0.12)}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+/* Sidebar transition */
+.sidebar{transition:width 0.22s cubic-bezier(0.4,0,0.2,1)}
+.sidebar.collapsed .nav-label{display:none!important}
+.sidebar.collapsed .nav-section-label{display:none!important}
+.sidebar.collapsed .sidebar-brand-text{display:none!important}
+.sidebar.collapsed .sidebar-user-text{display:none!important}
+.sidebar.collapsed .sidebar-links-text{display:none!important}
+/* Neon glow effects */
+.neon-green{text-shadow:0 0 10px rgba(0,230,118,0.5)}
+.card-hover{transition:transform 0.15s,box-shadow 0.15s}
+.card-hover:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,230,118,0.1)}
+/* Gradient backgrounds for hero */
+.dash-hero{background:linear-gradient(135deg,#070d1a 0%,#0d1a3a 50%,#0a1628 100%);position:relative;overflow:hidden}
+.dash-hero::before{content:'';position:absolute;top:-50%;right:-10%;width:400px;height:400px;background:radial-gradient(circle,rgba(0,230,118,0.04) 0%,transparent 70%);pointer-events:none}
 </style>
 </head>
 <body>
@@ -67,7 +90,13 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.07.02-09:45";
+const APP_VERSION = "HD System v.2026.07.27-07:00";
+// ── DARK NEON THEME CONSTANTS ──
+const inp={width:"100%",padding:"9px 12px",border:"1px solid var(--border2)",borderRadius:8,background:"var(--surface2)",color:"var(--text)",fontSize:15,boxSizing:"border-box",outline:"none"};
+const btn=(v="primary")=>({padding:"9px 18px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:600,fontSize:14,transition:"all 0.15s",
+  background:v==="primary"?"linear-gradient(135deg,#00c853,#00e676)":v==="danger"?"#ef4444":v==="blue"?"#2563eb":v==="purple"?"#7c3aed":"var(--surface2)",
+  color:v==="ghost"?"var(--text)":"#000",
+  boxShadow:v==="primary"?"0 0 16px rgba(0,230,118,0.3)":"none"});
 const GOOGLE_CLIENT_ID = "812643310192-q7mkulm7tlqdm2q6q9nqnv6nivso2o6h.apps.googleusercontent.com";
 const GOOGLE_DRIVE_FOLDER_ID = "1ZI9kBBzsgIE4Ncdlp70Mclm__32yYIxN";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -337,10 +366,6 @@ async function decryptText(packed,pin){
 }
 
 // ── STYLE HELPERS ──
-const inp={width:"100%",padding:"9px 12px",border:"1px solid var(--border)",borderRadius:8,background:"var(--bg)",color:"var(--text)",fontSize:14,boxSizing:"border-box",outline:"none"};
-const btn=(v="primary")=>({padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:600,fontSize:13,
-  background:v==="primary"?"var(--accent)":v==="danger"?"#ef4444":v==="blue"?"#2563eb":"var(--surface2)",
-  color:v==="ghost"?"var(--text)":"#fff"});
 
 const ROLE_COLORS={admin:{bg:"#ede9fe",text:"#7c3aed",label:"ADMIN"},finance:{bg:"#dbeafe",text:"#2563eb",label:"FINANCE"},user:{bg:"#dcfce7",text:"#16a34a",label:"USER"},viewer:{bg:"#f1f5f9",text:"#475569",label:"VIEWER"}};
 // Shared helper: true for every role except viewer. Used to hide/disable every
@@ -565,27 +590,32 @@ function LoginScreen({onLogin,authReady,autoLogoutReason}){
     setBusy(false);
   };
   const r=loggedRole?ROLE_COLORS[loggedRole]:null;
-  return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)"}}>
-    <div style={{textAlign:"center",width:320}}>
-      <div style={{fontSize:52,marginBottom:6}}>🦕</div>
-      <div style={{fontSize:22,fontWeight:800,color:"var(--accent)",fontFamily:"Georgia,serif"}}>Happy Dino</div>
-      <div style={{fontSize:12,color:"var(--muted)",marginBottom:autoLogoutReason?12:28}}>Xperience Camp Manager</div>
-      {autoLogoutReason&&<div style={{background:"#fef3c7",border:"1px solid #f59e0b",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#92400e",textAlign:"left"}}>
+  return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)",position:"relative",overflow:"hidden"}}>
+    {/* Background glow */}
+    <div style={{position:"absolute",top:"20%",left:"50%",transform:"translateX(-50%)",width:400,height:400,background:"radial-gradient(circle,rgba(0,230,118,0.04) 0%,transparent 70%)",pointerEvents:"none"}}/>
+    <div style={{textAlign:"center",width:340,position:"relative",zIndex:1}}>
+      <div style={{fontSize:56,marginBottom:8,lineHeight:1}}>🦕</div>
+      <div style={{fontSize:24,fontWeight:900,color:"var(--accent)",letterSpacing:"-0.02em"}}>Happy Dino</div>
+      <div style={{fontSize:12,color:"var(--muted)",marginBottom:autoLogoutReason?12:28,letterSpacing:"0.04em"}}>XPERIENCE CAMP MANAGER</div>
+      {autoLogoutReason&&<div style={{background:"rgba(245,158,11,0.12)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,color:"var(--amber)",textAlign:"left"}}>
         🔒 {autoLogoutReason}
       </div>}
-      <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:16,padding:24}}>
-        <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",marginBottom:10,textAlign:"left"}}>EMAIL</div>
-        <input type="email" autoCapitalize="none" autoCorrect="off" value={email} onChange={e=>{setEmail(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="you@example.com" style={{...inp,fontSize:15,marginBottom:14}}/>
-        <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",marginBottom:10,textAlign:"left"}}>PASSWORD</div>
-        <input type="password" value={password} onChange={e=>{setPassword(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="Password" style={{...inp,fontSize:15,marginBottom:10}}/>
-        {r&&<div style={{marginBottom:10,padding:"8px 0",borderRadius:8,background:r.bg}}>
-          <div style={{fontSize:16,fontWeight:900,color:r.text,letterSpacing:"0.06em"}}>LOGGED IN AS {r.label}</div>
+      <div style={{background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:16,padding:24,boxShadow:"0 0 40px rgba(0,0,0,0.4)"}}>
+        <div style={{fontSize:10,fontWeight:700,color:"var(--muted2)",marginBottom:6,textAlign:"left",letterSpacing:"0.1em"}}>EMAIL ADDRESS</div>
+        <input type="email" autoCapitalize="none" autoCorrect="off" value={email} onChange={e=>{setEmail(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="you@example.com" style={{...inp,fontSize:14,marginBottom:14}}/>
+        <div style={{fontSize:10,fontWeight:700,color:"var(--muted2)",marginBottom:6,textAlign:"left",letterSpacing:"0.1em"}}>PASSWORD</div>
+        <input type="password" value={password} onChange={e=>{setPassword(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="••••••••" style={{...inp,fontSize:14,marginBottom:14}}/>
+        {r&&<div style={{marginBottom:12,padding:"10px",borderRadius:10,background:`${r.bg}22`,border:`1px solid ${r.bg}`}}>
+          <div style={{fontSize:13,fontWeight:800,color:r.text,letterSpacing:"0.06em"}}>✔ LOGGED IN AS {r.label}</div>
         </div>}
-        {err&&<div style={{color:"#ef4444",fontSize:12,marginBottom:8}}>{err}</div>}
-        {!authReady&&<div style={{color:"var(--muted)",fontSize:11,marginBottom:8}}>⏳ Connecting to sign-in service...</div>}
-        <button onClick={handle} disabled={busy||!authReady} style={{...btn("primary"),width:"100%",opacity:(busy||!authReady)?0.6:1}}>{busy?"Signing in...":"Login"}</button>
+        {err&&<div style={{color:"#ef4444",fontSize:12,marginBottom:10,padding:"8px 10px",background:"rgba(239,68,68,0.1)",borderRadius:8}}>{err}</div>}
+        {!authReady&&<div style={{color:"var(--muted)",fontSize:11,marginBottom:10}}>⏳ Connecting to sign-in service...</div>}
+        <button onClick={handle} disabled={busy||!authReady}
+          style={{...btn("primary"),width:"100%",padding:"11px",fontSize:14,opacity:(busy||!authReady)?0.6:1,borderRadius:10}}>
+          {busy?"Signing in...":"Login"}
+        </button>
       </div>
-      <div style={{marginTop:18,fontSize:10,color:"var(--muted)"}}>{APP_VERSION}</div>
+      <div style={{marginTop:16,fontSize:9,color:"var(--muted2)",letterSpacing:"0.04em"}}>{APP_VERSION}</div>
     </div>
   </div>;
 }
@@ -794,75 +824,163 @@ function Dashboard({db,navigate,role}){
   const completedCount=sessions.filter(s=>s.status==="completed").length;
   const scheduledCount=sessions.filter(s=>s.status==="scheduled").length;
   const hideRevenue=role==="user";
-  return <div>
-    <h2 style={{fontSize:20,fontWeight:800,marginBottom:20}}>Dashboard</h2>
-    <SectionHeader label="Schools Overview"/>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:20}}>
-      <StatCard label="Schools Approached" value={schools.length} color="#7c3aed" onClick={()=>navigate("schools")}/>
-      <StatCard label="With Camps" value={schoolsWithCamps} color="#16a34a" onClick={()=>navigate("schools","withCamps")}/>
-      <StatCard label="Completed Sessions" value={completedCount} color="#2563eb" onClick={()=>navigate("sessions","completed")}/>
-      <StatCard label="Scheduled" value={scheduledCount} color="#d97706" onClick={()=>navigate("sessions","scheduled")}/>
-    </div>
-    {!hideRevenue&&<>
-    <SectionHeader label="Revenue"/>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,marginBottom:20}}>
-      <StatCard label="Total Revenue" value={fmt(totalRev)} color="#16a34a" onClick={()=>navigate("payments","all")}/>
-      <StatCard label="Paid" value={fmt(paid)} color="#2563eb" onClick={()=>navigate("payments","paid")}/>
-      <StatCard label="Unpaid" value={fmt(unpaid)} color="#d97706" onClick={()=>navigate("payments","unpaid")}/>
-      <StatCard label="Refunded" value={fmt(refunded)} color="#ef4444" onClick={()=>navigate("payments","refunded")}/>
-    </div>
-    <SectionHeader label="Expenses"/>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:20}}>
-      <StatCard label="Total Expenses" value={fmt(totalExp)} color="#7c3aed" onClick={()=>navigate("reports")}/>
-      {["materials","crew","meals","mileage","claims","others"].map(c=><StatCard key={c} label={c.charAt(0).toUpperCase()+c.slice(1)} value={fmt(bycat(c))} color="#64748b" onClick={()=>navigate("reports")}/>)}
-    </div>
-    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"14px 18px",marginBottom:20,display:"flex",gap:24,flexWrap:"wrap",alignItems:"center"}}>
-      <div><div style={{fontSize:11,color:"var(--muted)",fontWeight:700}}>NET P&L</div>
-        <div style={{fontSize:26,fontWeight:800,color:(totalRev-totalExp)>=0?"#16a34a":"#ef4444"}}>{fmt(totalRev-totalExp)}</div></div>
-      <div style={{flex:1,height:6,background:"var(--border)",borderRadius:99,minWidth:100}}>
-        <div style={{width:`${Math.min(100,totalRev>0?(paid/totalRev)*100:0)}%`,height:"100%",background:"#16a34a",borderRadius:99}}/>
+  const pnl=totalRev-totalExp;
+  const pnlPct=totalRev>0?Math.round((paid/totalRev)*100):0;
+
+  const NeonCard=({icon,label,value,color,onClick,sub})=><div onClick={onClick}
+    style={{background:"var(--surface)",border:`1px solid var(--border2)`,borderRadius:12,padding:"14px 16px",
+      cursor:onClick?"pointer":"default",transition:"all 0.18s",position:"relative",overflow:"hidden",
+      boxShadow:`0 0 0 0 ${color}20`}}
+    onMouseEnter={e=>{if(onClick){e.currentTarget.style.borderColor=color;e.currentTarget.style.boxShadow=`0 0 16px ${color}20`;}}}
+    onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border2)";e.currentTarget.style.boxShadow="none";}}>
+    <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
+      <div style={{width:40,height:40,borderRadius:10,background:`${color}18`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{icon}</div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:20,fontWeight:800,color,lineHeight:1.1}}>{value}</div>
+        <div style={{fontSize:11,color:"var(--muted)",marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{label}</div>
+        {sub&&<div style={{fontSize:10,color:"var(--muted2)",marginTop:1}}>{sub}</div>}
       </div>
-      <div style={{fontSize:12,color:"var(--muted)"}}>{totalRev>0?Math.round((paid/totalRev)*100):0}% collected</div>
+    </div>
+    {onClick&&<div style={{position:"absolute",bottom:8,right:10,fontSize:9,color:"var(--muted2)"}}>tap to view →</div>}
+  </div>;
+
+  return <div>
+    {/* Welcome header */}
+    <div style={{marginBottom:20,padding:"18px 20px",background:"linear-gradient(135deg,var(--surface) 0%,var(--surface2) 100%)",borderRadius:14,border:"1px solid var(--border2)",position:"relative",overflow:"hidden"}}>
+      <div style={{position:"absolute",top:-20,right:-20,fontSize:80,opacity:0.06}}>🦕</div>
+      <div style={{fontSize:18,fontWeight:800,color:"var(--text)"}}>Dashboard</div>
+      <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Welcome back. Here's what's happening today.</div>
+    </div>
+
+    {/* Schools Overview */}
+    <div style={{fontSize:11,fontWeight:700,color:"var(--muted2)",letterSpacing:"0.08em",marginBottom:8,textTransform:"uppercase"}}>Schools Overview</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:20}}>
+      <NeonCard icon="🏛" label="Schools Approached" value={schools.length} color="#a855f7" onClick={()=>navigate("schools")}/>
+      <NeonCard icon="⛺" label="With Camps" value={schoolsWithCamps} color="#00e676" onClick={()=>navigate("schools","withCamps")}/>
+      <NeonCard icon="✅" label="Completed Sessions" value={completedCount} color="#3b82f6" onClick={()=>navigate("sessions","completed")}/>
+      <NeonCard icon="📅" label="Scheduled" value={scheduledCount} color="#fbbf24" onClick={()=>navigate("sessions","scheduled")}/>
+    </div>
+
+    {!hideRevenue&&<>
+    {/* Revenue */}
+    <div style={{fontSize:11,fontWeight:700,color:"var(--muted2)",letterSpacing:"0.08em",marginBottom:8,textTransform:"uppercase"}}>Revenue</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:20}}>
+      <NeonCard icon="💰" label="Total Revenue" value={fmt(totalRev)} color="#00e676" onClick={()=>navigate("payments","all")}/>
+      <NeonCard icon="💳" label="Paid" value={fmt(paid)} color="#3b82f6" onClick={()=>navigate("payments","paid")}/>
+      <NeonCard icon="⏰" label="Unpaid" value={fmt(unpaid)} color="#fbbf24" onClick={()=>navigate("payments","unpaid")}/>
+      <NeonCard icon="↩" label="Refunded" value={fmt(refunded)} color="#ef4444" onClick={()=>navigate("payments","refunded")}/>
+    </div>
+
+    {/* Expenses */}
+    <div style={{fontSize:11,fontWeight:700,color:"var(--muted2)",letterSpacing:"0.08em",marginBottom:8,textTransform:"uppercase"}}>Expenses</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:20}}>
+      <NeonCard icon="📊" label="Total Expenses" value={fmt(totalExp)} color="#a855f7" onClick={()=>navigate("reports")}/>
+      {[["materials","🧱","#fb923c"],["crew","👷","#a78bfa"],["meals","🍽","#34d399"],["mileage","🛎","#60a5fa"],["claims","🛡","#f472b6"],["others","⋯","#94a3b8"]].map(([c,icon,col])=><NeonCard key={c} icon={icon} label={c.charAt(0).toUpperCase()+c.slice(1)} value={fmt(bycat(c))} color={col} onClick={()=>navigate("reports")}/>)}
+    </div>
+
+    {/* Net P&L */}
+    <div style={{background:"var(--surface)",border:`1px solid ${pnl>=0?"rgba(0,230,118,0.3)":"rgba(239,68,68,0.3)"}`,borderRadius:12,padding:"16px 20px",marginBottom:20,boxShadow:pnl>=0?"0 0 20px rgba(0,230,118,0.06)":"0 0 20px rgba(239,68,68,0.06)"}}>
+      <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
+        <div>
+          <div style={{fontSize:11,color:"var(--muted)",fontWeight:700,letterSpacing:"0.08em"}}>NET P&L</div>
+          <div style={{fontSize:28,fontWeight:900,color:pnl>=0?"var(--accent)":"#ef4444",marginTop:2}}>{fmt(pnl)}</div>
+        </div>
+        <div style={{flex:1,minWidth:120}}>
+          <div style={{height:8,background:"var(--surface2)",borderRadius:99,overflow:"hidden",border:"1px solid var(--border2)"}}>
+            <div style={{width:`${Math.min(100,pnlPct)}%`,height:"100%",background:"linear-gradient(90deg,#00c853,#00e676)",borderRadius:99,transition:"width 0.6s",boxShadow:"0 0 8px rgba(0,230,118,0.5)"}}/>
+          </div>
+          <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>{pnlPct}% collected</div>
+        </div>
+      </div>
     </div>
     </>}
-    <SectionHeader label="Upcoming Sessions"/>
-    {upcoming.length===0?<div style={{color:"var(--muted)",fontSize:13}}>No scheduled sessions.</div>:
-    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,overflow:"hidden"}}>
-      {upcoming.map((s,i)=>{
-        const school=(db.schools||[]).find(sc=>sc.id===s.schoolId);
-        const ct=(db.campTypes||[]).find(c=>c.id===s.campTypeId);
-        const regCount=(db.registrations||[]).filter(r=>r.sessionId===s.id).length;
-        return <div key={s.id} style={{display:"flex",gap:12,padding:"12px 16px",borderTop:i?"1px solid var(--border)":"none",alignItems:"center",flexWrap:"wrap"}}>
-          <div style={{minWidth:76,fontSize:12,fontWeight:700,color:"var(--accent)"}}>{fmtDate(s.date)}</div>
-          <div style={{flex:1}}><div style={{fontWeight:600,fontSize:13}}>{school?.name||"—"}</div><div style={{fontSize:12,color:"var(--muted)"}}>{ct?.name||"—"}</div></div>
-          <Badge label={`${regCount} students`} color="blue"/>
-        </div>;
-      })}
-    </div>}
+
+    {/* Upcoming Sessions */}
+    <div style={{fontSize:11,fontWeight:700,color:"var(--muted2)",letterSpacing:"0.08em",marginBottom:8,textTransform:"uppercase"}}>Upcoming Sessions</div>
+    {upcoming.length===0
+      ?<div style={{background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:12,padding:"20px",textAlign:"center",color:"var(--muted)",fontSize:13}}>
+        <div style={{fontSize:32,marginBottom:8}}>📅</div>No scheduled sessions. Great, you're all caught up.
+      </div>
+      :<div style={{background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:12,overflow:"hidden"}}>
+        {upcoming.map((s,i)=>{
+          const school=(db.schools||[]).find(sc=>sc.id===s.schoolId);
+          const ct=(db.campTypes||[]).find(c=>c.id===s.campTypeId);
+          const regCount=(db.registrations||[]).filter(r=>r.sessionId===s.id).length;
+          const daysLeft=Math.ceil((new Date(s.date)-new Date())/(1000*60*60*24));
+          return <div key={s.id} style={{display:"flex",gap:12,padding:"12px 16px",borderTop:i?"1px solid var(--border)":"none",alignItems:"center",flexWrap:"wrap"}}>
+            <div style={{minWidth:80,textAlign:"center",background:"var(--surface2)",borderRadius:8,padding:"6px 8px",flexShrink:0}}>
+              <div style={{fontSize:11,fontWeight:800,color:"var(--accent)"}}>{fmtDate(s.date)}</div>
+              {daysLeft>=0&&<div style={{fontSize:9,color:"var(--muted)",marginTop:1}}>{daysLeft===0?"Today":`In ${daysLeft}d`}</div>}
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{school?.name||"—"}</div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>{ct?.name||"—"}</div>
+            </div>
+            <Badge label={`${regCount} students`} color="blue"/>
+          </div>;
+        })}
+      </div>}
   </div>;
 }
 
-// ── GLOBAL SEARCH ──
+// ── GLOBAL SEARCH (expanded) ──
 function GlobalSearch({db,onResultClick}){
   const [q,setQ]=useState("");
   const [open,setOpen]=useState(false);
+  const ref=useRef(null);
+  useEffect(()=>{
+    const h=(e)=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false);};
+    document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);
+  },[]);
   const results=(()=>{
     if(!q||q.length<2)return[];
     const ql=q.toLowerCase();
     const out=[];
-    (db.schools||[]).forEach(s=>{if(s.name?.toLowerCase().includes(ql))out.push({type:"School",label:s.name,sub:s.address,nav:"schools"});});
-    (db.students||[]).forEach(s=>{if(s.name?.toLowerCase().includes(ql))out.push({type:"Student",label:s.name,sub:s.className,nav:"students"});});
-    (db.crew||[]).forEach(c=>{if(c.name?.toLowerCase().includes(ql))out.push({type:"Crew",label:c.name,sub:c.phone,nav:"crew"});});
-    return out.slice(0,8);
+    // Schools — name, principal, phone, address
+    (db.schools||[]).forEach(s=>{
+      if([s.name,s.principal,s.phone,s.address,s.email].some(f=>f?.toLowerCase().includes(ql)))
+        out.push({type:"School",color:"purple",label:s.name,sub:`${s.principal||""}${s.phone?" · "+s.phone:""}`,nav:"schools"});
+    });
+    // Students — name, Chinese name, IC, class, parent name, parent phone, emergency phone, bank
+    (db.students||[]).forEach(s=>{
+      const school=(db.schools||[]).find(x=>x.id===s.schoolId);
+      if([s.name,s.nameChinese,s.ic,s.className,s.parentName,s.parentPhone,s.emergencyName,s.emergencyPhone,
+        ...(s.parentPhoneExtra||[]),...(s.emergencyPhoneExtra||[])].some(f=>f?.toLowerCase().includes(ql)))
+        out.push({type:"Student",color:"blue",label:s.name+(s.nameChinese?` (${s.nameChinese})`:""),sub:`${s.className||""}${school?" · "+school.name:""}${s.ic?" · IC: "+s.ic:""}`,nav:"students"});
+    });
+    // Crew — name, Chinese name, NRIC, phone, email
+    (db.crew||[]).forEach(c=>{
+      if([c.name,c.nameChinese,c.nric,c.phone,c.email].some(f=>f?.toLowerCase().includes(ql)))
+        out.push({type:"Crew",color:"green",label:c.name+(c.nameChinese?` (${c.nameChinese})`:""),sub:`${c.phone||""}${c.nric?" · "+c.nric:""}`,nav:"crew"});
+    });
+    // Parents/Guardians — search returns the student, labelled as parent result
+    (db.students||[]).forEach(s=>{
+      if([s.parentName,s.parentPhone,...(s.parentPhoneExtra||[])].some(f=>f?.toLowerCase().includes(ql)))
+        if(!out.find(o=>o.nav==="students"&&o.label.startsWith(s.name)))
+          out.push({type:"Parent",color:"amber",label:s.parentName||"?",sub:`Parent of ${s.name} · ${s.parentPhone||""}`,nav:"students"});
+    });
+    // Sessions — school name, camp type, date
+    (db.sessions||[]).forEach(s=>{
+      const school=(db.schools||[]).find(x=>x.id===s.schoolId);
+      const ct=(db.campTypes||[]).find(x=>x.id===s.campTypeId);
+      if([school?.name,ct?.name,s.date].some(f=>f?.toLowerCase().includes(ql)))
+        out.push({type:"Session",color:"blue",label:`${school?.name||"?"} — ${ct?.name||"?"}`,sub:fmtDate(s.date),nav:"sessions"});
+    });
+    return out.slice(0,12);
   })();
-  return <div style={{position:"relative",flex:1,maxWidth:280}}>
-    <input value={q} onChange={e=>{setQ(e.target.value);setOpen(true);}} onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
-      placeholder="🔍 Search schools, students, crew..." style={{...inp,padding:"7px 12px",fontSize:12}}/>
-    {open&&results.length>0&&<div style={{position:"absolute",top:"100%",left:0,right:0,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:8,marginTop:4,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:200,maxHeight:300,overflowY:"auto"}}>
-      {results.map((r,i)=><div key={i} onClick={()=>{onResultClick(r.nav);setQ("");setOpen(false);}} style={{padding:"8px 12px",cursor:"pointer",borderTop:i?"1px solid var(--border)":"none",fontSize:12}}
-        onMouseDown={e=>e.preventDefault()}>
-        <Badge label={r.type} color={r.type==="School"?"purple":r.type==="Student"?"blue":"green"}/> <b>{r.label}</b>
-        {r.sub&&<div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>{r.sub}</div>}
+  const typeColor={School:"purple",Student:"blue",Crew:"green",Parent:"amber",Session:"blue"};
+  return <div ref={ref} style={{position:"relative",flex:1,maxWidth:320}}>
+    <div style={{display:"flex",alignItems:"center",background:"var(--surface2)",border:"1px solid var(--border2)",borderRadius:10,padding:"0 12px",gap:8}}>
+      <span style={{color:"var(--muted)",fontSize:13}}>🔍</span>
+      <input value={q} onChange={e=>{setQ(e.target.value);setOpen(true);}} onFocus={()=>setOpen(true)}
+        placeholder="Search name, IC, phone, school..." style={{...inp,border:"none",background:"transparent",padding:"7px 0",fontSize:12}}/>
+      {q&&<button onClick={()=>{setQ("");setOpen(false);}} style={{background:"none",border:"none",cursor:"pointer",color:"var(--muted)",fontSize:14,padding:"0 2px"}}>✕</button>}
+    </div>
+    {open&&results.length>0&&<div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:10,boxShadow:"0 8px 32px rgba(0,0,0,0.4)",zIndex:300,maxHeight:360,overflowY:"auto"}}>
+      {results.map((r,i)=><div key={i} onMouseDown={e=>e.preventDefault()} onClick={()=>{onResultClick(r.nav);setQ("");setOpen(false);}}
+        style={{padding:"8px 12px",cursor:"pointer",borderTop:i?"1px solid var(--border)":"none",fontSize:12,display:"flex",gap:8,alignItems:"flex-start"}}>
+        <Badge label={r.type} color={typeColor[r.type]||"gray"}/>
+        <div><div style={{fontWeight:600,color:"var(--text)"}}>{r.label}</div>{r.sub&&<div style={{fontSize:11,color:"var(--muted)",marginTop:1}}>{r.sub}</div>}</div>
       </div>)}
     </div>}
   </div>;
@@ -938,10 +1056,124 @@ function Students({db,refresh,school,onBack,actor,onHome}){
   const [editing,setEditing]=useState(null);
   const [form,setForm]=useState({});
   const [revealBank,setRevealBank]=useState({});
+
+  // ── FILTERS & SORT ──
+  const [filterSchool,setFilterSchool]=useState(school?.id||"");
+  const [filterYear,setFilterYear]=useState("");      // "1","2",...,"6","other","" = all
+  const [filterClassName,setFilterClassName]=useState(""); // specific class name within year
+  const [filterGender,setFilterGender]=useState("");
+  const [filterAgeMin,setFilterAgeMin]=useState("");
+  const [filterAgeMax,setFilterAgeMax]=useState("");
+  const [filterSize,setFilterSize]=useState("");
+  const [filterCampType,setFilterCampType]=useState("");
+  const [sortBy,setSortBy]=useState("added");         // "nameAZ","nameZA","classAZ","classZA","ageAsc","ageDesc","added"
+  const [showFilters,setShowFilters]=useState(false);
+
+  const clearFilters=()=>{
+    setFilterSchool(school?.id||"");setFilterYear("");setFilterClassName("");
+    setFilterGender("");setFilterAgeMin("");setFilterAgeMax("");
+    setFilterSize("");setFilterCampType("");setSortBy("added");
+  };
+
   const allStudents=db.students||[];
-  const students=school?allStudents.filter(s=>s.schoolId===school.id):allStudents;
+  const baseStudents=school?allStudents.filter(s=>s.schoolId===school.id):allStudents;
+
+  // ── YEAR/CLASS PARSING ──
+  // Extract year prefix (leading digit 1-6) from a class name string.
+  // e.g. "3 Amanah" → "3", "3A" → "3", "Genius" → "other"
+  const getYear=(className)=>{
+    if(!className)return "other";
+    const m=String(className).match(/^([1-6])\s*[A-Za-z\s]/);
+    if(m)return m[1];
+    const d=String(className).match(/^([1-6])$/);
+    if(d)return d[1];
+    return "other";
+  };
+  const getClassSuffix=(className)=>{
+    if(!className)return "";
+    // strip leading digit to get the name part: "3 Amanah" → "Amanah", "3A" → "A"
+    return String(className).replace(/^[1-6]\s*/,"").trim()||className;
+  };
+
+  // Which years actually exist in this student pool?
+  const existingYears=[...new Set(baseStudents.map(s=>getYear(s.className)))].sort((a,b)=>{
+    if(a==="other")return 1;if(b==="other")return -1;return parseInt(a)-parseInt(b);
+  });
+
+  // Class names within the selected year (for secondary row)
+  const classesInYear=filterYear
+    ? [...new Set(
+        baseStudents
+          .filter(s=>getYear(s.className)===filterYear)
+          .map(s=>s.className)
+          .filter(Boolean)
+      )].sort()
+    : [];
+
+  // ── FILTERING ──
+  const baseFiltered=baseStudents.filter(s=>{
+    if(filterSchool&&!school&&s.schoolId!==filterSchool)return false;
+    if(filterYear&&getYear(s.className)!==filterYear)return false;
+    if(filterClassName&&s.className!==filterClassName)return false;
+    if(filterGender&&s.gender!==filterGender)return false;
+    const age=s.dob?calcAge(s.dob):null;
+    if(filterAgeMin&&(age===null||age<parseInt(filterAgeMin)))return false;
+    if(filterAgeMax&&(age===null||age>parseInt(filterAgeMax)))return false;
+    if(filterSize&&s.tshirtSize!==filterSize)return false;
+    if(filterCampType){
+      const sessIds=(db.sessions||[]).filter(ss=>ss.campTypeId===filterCampType).map(ss=>ss.id);
+      const attended=(db.registrations||[]).some(r=>r.studentId===s.id&&sessIds.includes(r.sessionId));
+      if(!attended)return false;
+    }
+    return true;
+  });
+
+  // ── SORTING ──
+  const students=[...baseFiltered].sort((a,b)=>{
+    switch(sortBy){
+      case "nameAZ": return (a.name||"").localeCompare(b.name||"");
+      case "nameZA": return (b.name||"").localeCompare(a.name||"");
+      case "classAZ": return (a.className||"").localeCompare(b.className||"");
+      case "classZA": return (b.className||"").localeCompare(a.className||"");
+      case "ageAsc": {
+        const aa=a.dob?calcAge(a.dob):999,ba=b.dob?calcAge(b.dob):999;
+        return aa-ba;
+      }
+      case "ageDesc": {
+        const aa=a.dob?calcAge(a.dob):0,ba=b.dob?calcAge(b.dob):0;
+        return ba-aa;
+      }
+      default: return 0; // "added" = insertion order
+    }
+  });
+
+  // ── ACTIVE FILTER SUMMARY ──
+  const summaryParts=[];
+  if(filterYear)summaryParts.push(filterYear==="other"?"Other classes":`Year ${filterYear}`);
+  if(filterClassName)summaryParts.push(filterClassName);
+  if(filterGender)summaryParts.push(filterGender);
+  if(filterAgeMin&&filterAgeMax)summaryParts.push(`Age ${filterAgeMin}–${filterAgeMax}`);
+  else if(filterAgeMin)summaryParts.push(`Age ≥${filterAgeMin}`);
+  else if(filterAgeMax)summaryParts.push(`Age ≤${filterAgeMax}`);
+  if(filterSize)summaryParts.push(filterSize);
+  if(filterCampType){const ct=(db.campTypes||[]).find(c=>c.id===filterCampType);if(ct)summaryParts.push(ct.name);}
+  summaryParts.push(`${students.length} student${students.length!==1?"s":""}`);
+  const summaryLine=summaryParts.join(" · ");
+
+  const activeFilterCount=[filterYear,filterClassName,filterGender,filterAgeMin,filterAgeMax,filterSize,filterCampType,(!school&&filterSchool)?"y":""].filter(Boolean).length;
+
+  const allSchools=db.schools||[];
   const canSeeBank=actor.role==="admin"||actor.role==="finance";
   const sizes=db.tshirtSizes||[];
+
+  // Chip button style
+  const chip=(active)=>({
+    padding:"5px 12px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:active?700:400,
+    background:active?"var(--accent)":"var(--surface2)",
+    color:active?"#000":"#ffffff",
+    transition:"all 0.15s",whiteSpace:"nowrap",
+  });
+
   const openAdd=()=>{setForm({id:uid(),schoolId:school?.id||"",name:"",nameChinese:"",gender:"",ic:"",dob:"",address:"",className:"",phone:"",
     parentName:"",parentRelation:"Mother",parentPhone:"",parentPhoneExtra:[],
     emergencyName:"",emergencyRelation:"Guardian",emergencyPhone:"",emergencyPhoneExtra:[],
@@ -954,10 +1186,105 @@ function Students({db,refresh,school,onBack,actor,onHome}){
   const addExtraPhone=(field)=>setForm({...form,[field]:[...(form[field]||[]),""]});
   const updateExtraPhone=(field,idx,val)=>{const arr=[...(form[field]||[])];arr[idx]=val;setForm({...form,[field]:arr});};
   const removeExtraPhone=(field,idx)=>setForm({...form,[field]:(form[field]||[]).filter((_,i)=>i!==idx)});
+
   return <div>
     <PageHeader crumbs={[{label:"Dashboard",nav:onHome},school?"Schools":"Students",school?school.name:null].filter(Boolean)} onBack={onBack} onHome={onHome} title={school?`Students — ${school.name}`:"All Students"} action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Add Student</button>}/>
-    {students.length===0?<EmptyState icon="🎒" text="No students yet."/>:
-    <div style={{display:"grid",gap:10}}>
+
+    {/* ── SMART FILTER BAR ── */}
+    <div style={{marginBottom:14}}>
+
+      {/* Row 1: Year chips + Sort + Filters toggle */}
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+        {/* Year chips — only years that exist */}
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
+          <button style={chip(!filterYear)} onClick={()=>{setFilterYear("");setFilterClassName("");}}>All</button>
+          {existingYears.map(y=><button key={y} style={chip(filterYear===y)}
+            onClick={()=>{setFilterYear(filterYear===y?"":y);setFilterClassName("");}}>
+            {y==="other"?"Other":`${y}x`}
+          </button>)}
+        </div>
+        <div style={{width:1,height:20,background:"var(--border2)",margin:"0 4px"}}/>
+        {/* Sort selector */}
+        <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
+          style={{...inp,width:"auto",fontSize:12,padding:"5px 10px",color:"#ffffff"}}>
+          <option value="added">Sort: Recently Added</option>
+          <option value="nameAZ">Name A → Z</option>
+          <option value="nameZA">Name Z → A</option>
+          <option value="classAZ">Class A → Z</option>
+          <option value="classZA">Class Z → A</option>
+          <option value="ageAsc">Age: Youngest first</option>
+          <option value="ageDesc">Age: Oldest first</option>
+        </select>
+        {/* More filters toggle */}
+        <button onClick={()=>setShowFilters(!showFilters)}
+          style={{...chip(showFilters||(activeFilterCount-[filterYear,filterClassName].filter(Boolean).length)>0),padding:"5px 10px",fontSize:12}}>
+          ⚙ More {(activeFilterCount-[filterYear,filterClassName].filter(Boolean).length)>0&&
+            <span style={{background:"#000",color:"var(--accent)",borderRadius:"50%",width:14,height:14,fontSize:9,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",marginLeft:4}}>
+              {activeFilterCount-[filterYear,filterClassName].filter(Boolean).length}
+            </span>}
+        </button>
+        {activeFilterCount>0&&<button onClick={clearFilters}
+          style={{fontSize:11,color:"#ef4444",background:"none",border:"none",cursor:"pointer",padding:"2px 4px",flexShrink:0}}>
+          ✕ Clear all
+        </button>}
+      </div>
+
+      {/* Row 2: Class name chips — only when a year is selected AND it has multiple classes */}
+      {filterYear&&classesInYear.length>1&&<div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:6,paddingLeft:2}}>
+        <span style={{fontSize:10,color:"var(--muted)",fontWeight:700,alignSelf:"center",marginRight:2}}>CLASS:</span>
+        <button style={{...chip(!filterClassName),fontSize:11,padding:"3px 10px"}}
+          onClick={()=>setFilterClassName("")}>
+          All Year {filterYear}
+        </button>
+        {classesInYear.map(cn=><button key={cn} style={{...chip(filterClassName===cn),fontSize:11,padding:"3px 10px"}}
+          onClick={()=>setFilterClassName(filterClassName===cn?"":cn)}>
+          {getClassSuffix(cn)||cn}
+        </button>)}
+      </div>}
+
+      {/* Row 3: More filters panel — gender, age, size, camp */}
+      {showFilters&&<div style={{background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:10,padding:"12px 14px",
+        display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))",gap:10,marginBottom:6}}>
+        {!school&&<div>
+          <div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>SCHOOL</div>
+          <select style={{...inp,fontSize:12}} value={filterSchool} onChange={e=>setFilterSchool(e.target.value)}>
+            <option value="">All Schools</option>{allSchools.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>}
+        <div>
+          <div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>GENDER</div>
+          <select style={{...inp,fontSize:12}} value={filterGender} onChange={e=>setFilterGender(e.target.value)}>
+            <option value="">Any</option><option>Male</option><option>Female</option>
+          </select>
+        </div>
+        <div>
+          <div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>AGE (MIN)</div>
+          <input type="number" style={{...inp,fontSize:12}} value={filterAgeMin} onChange={e=>setFilterAgeMin(e.target.value)} placeholder="e.g. 7"/>
+        </div>
+        <div>
+          <div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>AGE (MAX)</div>
+          <input type="number" style={{...inp,fontSize:12}} value={filterAgeMax} onChange={e=>setFilterAgeMax(e.target.value)} placeholder="e.g. 12"/>
+        </div>
+        <div>
+          <div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>T-SHIRT SIZE</div>
+          <select style={{...inp,fontSize:12}} value={filterSize} onChange={e=>setFilterSize(e.target.value)}>
+            <option value="">Any Size</option>{sizes.map(s=><option key={s.id} value={s.label}>{s.label} ({s.chest})</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{fontSize:10,color:"var(--muted)",marginBottom:4,fontWeight:700}}>ATTENDED CAMP</div>
+          <select style={{...inp,fontSize:12}} value={filterCampType} onChange={e=>setFilterCampType(e.target.value)}>
+            <option value="">Any</option>{(db.campTypes||[]).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+      </div>}
+
+      {/* Active filter summary line */}
+      <div style={{fontSize:12,color:"var(--muted)",paddingLeft:2}}>{summaryLine}</div>
+    </div>
+    {students.length===0
+      ?<EmptyState icon="🎒" text={activeFilterCount>0?"No students match your current filters.":"No students yet."}/>
+      :<div style={{display:"grid",gap:10}}>
       {students.map(s=>{
         const regs=(db.registrations||[]).filter(r=>r.studentId===s.id);
         const attended=regs.filter(r=>{const sess=(db.sessions||[]).find(ss=>ss.id===r.sessionId);return sess?.status==="completed";}).length;
@@ -970,7 +1297,7 @@ function Students({db,refresh,school,onBack,actor,onHome}){
               <div style={{fontWeight:700,fontSize:14}}>{s.name}{s.nameChinese&&<span style={{fontWeight:400,color:"var(--muted)"}}> ({s.nameChinese})</span>} <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>· {s.className} · Age {calcAge(s.dob)}{s.gender&&` · ${s.gender}`}</span></div>
               <div style={{fontSize:12,color:"var(--muted)"}}>IC: {s.ic} · {s.parentRelation}: {s.parentName} · {s.parentPhone}{(s.parentPhoneExtra||[]).filter(Boolean).length>0&&`, ${s.parentPhoneExtra.filter(Boolean).join(", ")}`}</div>
               {canSeeBank&&(s.bankName||s.bankAccountNo)&&<div style={{fontSize:12,color:"var(--muted)"}}>🏦 {s.bankName} · {isRevealed?s.bankAccountNo:maskAccountNo(s.bankAccountNo)} <span onClick={()=>setRevealBank({...revealBank,[s.id]:!isRevealed})} style={{cursor:"pointer",color:"var(--accent)",fontSize:11}}>{isRevealed?"hide":"👁 reveal"}</span></div>}
-              {siblings.length>0&&<div style={{fontSize:12,color:"#7c3aed"}}>👨‍👩‍👧 Siblings: {siblings.map(sb=>sb.name).join(", ")}</div>}
+              {siblings.length>0&&<div style={{fontSize:12,color:"#7c3aed"}}>👨‍👩‍👧 Siblings: {siblings.map(sb=>`${sb.name}${sb.className?` (${sb.className})`:""}`).join(", ")}</div>}
               {s.allergies&&<div style={{fontSize:12,color:"#dc2626"}}>⚠ {s.allergies}</div>}
             </div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"flex-start"}}>
@@ -1095,13 +1422,21 @@ function CampTypes({db,refresh,actor,onHome}){
         <Field label="Material Cost (RM)"><input type="number" style={inp} value={form.materialCost||""} onChange={e=>setForm({...form,materialCost:e.target.value})}/></Field>
         <Field label="Meal Cost / Head (RM)"><input type="number" style={inp} value={form.mealCost||""} onChange={e=>setForm({...form,mealCost:e.target.value})}/></Field>
       </div>
-      <div style={{fontWeight:700,fontSize:11,color:"var(--muted)",margin:"10px 0 6px",textTransform:"uppercase"}}>Crew Fee Tiers (per role, per session)</div>
-      <div style={{fontSize:11,color:"var(--muted)",marginBottom:8}}>Set a default fee for each crew role. When assigning crew to a session, this default appears automatically based on the role chosen, and can still be overridden for a specific person.</div>
-      {(form.crewFeeTiers||[]).map((t,i)=><div key={t.id||i} style={{display:"flex",gap:8,marginBottom:6}}>
-        <input style={{...inp,flex:2}} placeholder="Role (e.g. Lead Facilitator)" value={t.role} onChange={e=>updateTier(i,"role",e.target.value)}/>
-        <input type="number" style={{...inp,flex:1}} placeholder="RM" value={t.fee} onChange={e=>updateTier(i,"fee",e.target.value)}/>
-        <button onClick={()=>removeTier(i)} style={{...btn("danger"),padding:"8px 10px"}}>✕</button>
+      <div style={{fontWeight:700,fontSize:11,color:"var(--muted)",margin:"10px 0 6px",textTransform:"uppercase"}}>Crew Fee Tiers (per role, per session or per hour)</div>
+      <div style={{fontSize:11,color:"var(--muted)",marginBottom:8}}>Set a default fee for each crew role. Choose Per Session (flat rate) or Per Hour (rate × hours worked). Hours can be adjusted per assignment.</div>
+      {(form.crewFeeTiers||[]).map((t,i)=><div key={t.id||i} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr auto",gap:6,marginBottom:6,alignItems:"center"}}>
+        <input style={{...inp,fontSize:12}} placeholder="Role (e.g. Lead Facilitator)" value={t.role||""} onChange={e=>updateTier(i,"role",e.target.value)}/>
+        <select style={{...inp,fontSize:12}} value={t.payType||"session"} onChange={e=>updateTier(i,"payType",e.target.value)}>
+          <option value="session">Per Session</option>
+          <option value="hour">Per Hour</option>
+        </select>
+        <input type="number" style={{...inp,fontSize:12}} placeholder="RM rate" value={t.fee||""} onChange={e=>updateTier(i,"fee",e.target.value)}/>
+        {t.payType==="hour"
+          ?<input type="number" style={{...inp,fontSize:12}} placeholder="Std hrs" value={t.stdHours||""} onChange={e=>updateTier(i,"stdHours",e.target.value)} title="Standard hours per session (default)"/>
+          :<div style={{fontSize:10,color:"var(--muted)",textAlign:"center"}}>—</div>}
+        <button onClick={()=>removeTier(i)} style={{...btn("danger"),padding:"7px 9px",fontSize:12}}>✕</button>
       </div>)}
+      <div style={{fontSize:10,color:"var(--muted)",marginBottom:6}}>Role · Pay Type · Rate (RM) · Std Hours (hourly only)</div>
       <button onClick={addTier} style={{...btn("ghost"),fontSize:12,marginBottom:12}}>+ Add Fee Tier</button>
       <div style={{fontWeight:700,fontSize:11,color:"var(--muted)",margin:"10px 0 6px",textTransform:"uppercase"}}>Additional Cost Items</div>
       {(form.extraCosts||[]).map((ec,i)=><div key={i} style={{display:"flex",gap:8,marginBottom:6}}>
@@ -1214,18 +1549,37 @@ function SessionDetail({session,db,refresh,onBack,actor}){
 
 function SessionRegistrations({session,db,refresh,actor}){
   const [showModal,setShowModal]=useState(false);
+  const [multiMode,setMultiMode]=useState(false);
   const [form,setForm]=useState({studentId:"",paymentOverride:""});
+  const [selected,setSelected]=useState(new Set());
+  const [filterClass,setFilterClass]=useState("");
+  const [filterGender,setFilterGender]=useState("");
+  const [filterAge,setFilterAge]=useState("");
   const regs=(db.registrations||[]).filter(r=>r.sessionId===session.id);
   const ct=(db.campTypes||[]).find(c=>c.id===session.campTypeId);
   const schoolStudents=(db.students||[]).filter(st=>st.schoolId===session.schoolId);
-  const calcFee=(studentId)=>{
+  const calcFee=(studentId,currentRegs)=>{
+    const r=currentRegs||regs;
     if(!ct)return 0;const base=parseFloat(ct.fee||0);if(!ct.discountable)return base;
     const student=(db.students||[]).find(s=>s.id===studentId);if(!student)return base;
     const siblings=(db.students||[]).filter(s=>s.parentPhone===student.parentPhone&&s.id!==student.id);
-    const sibRegs=regs.filter(r=>siblings.map(s=>s.id).includes(r.studentId));
+    const sibRegs=r.filter(reg=>siblings.map(s=>s.id).includes(reg.studentId));
     if(sibRegs.length===0)return base;if(sibRegs.length===1)return base*(1-parseFloat(ct.sibling2Pct||0)/100);
     return base*(1-parseFloat(ct.sibling3Pct||0)/100);
   };
+  const available=schoolStudents.filter(s=>!regs.map(r=>r.studentId).includes(s.id));
+  const filteredAvailable=available.filter(s=>{
+    if(filterClass&&s.className!==filterClass)return false;
+    if(filterGender&&s.gender!==filterGender)return false;
+    if(filterAge){const a=s.dob?calcAge(s.dob):null;if(a===null||String(a)!==filterAge)return false;}
+    return true;
+  });
+  const uniqueClasses=[...new Set(available.map(s=>s.className).filter(Boolean))].sort();
+  const uniqueAges=[...new Set(available.map(s=>s.dob?String(calcAge(s.dob)):"").filter(Boolean))].sort((a,b)=>+a-+b);
+  const toggleSel=(id)=>{const ns=new Set(selected);ns.has(id)?ns.delete(id):ns.add(id);setSelected(ns);};
+  const toggleAll=()=>{if(filteredAvailable.every(s=>selected.has(s.id))){const ns=new Set(selected);filteredAvailable.forEach(s=>ns.delete(s.id));setSelected(ns);}else{const ns=new Set(selected);filteredAvailable.forEach(s=>ns.add(s.id));setSelected(ns);}};
+  const bulkTotal=Array.from(selected).reduce((a,id)=>a+parseFloat(calcFee(id)||0),0);
+
   const addReg=()=>{
     if(!form.studentId)return;
     const fee=form.paymentOverride||calcFee(form.studentId);
@@ -1234,6 +1588,20 @@ function SessionRegistrations({session,db,refresh,actor}){
     setDB({registrations:[...(db.registrations||[]),reg],payments:[...(db.payments||[]),pay]});
     logAction(actor.role,actor.name,"REGISTER_STUDENT",form.studentId);
     refresh();setShowModal(false);setForm({studentId:"",paymentOverride:""});
+  };
+  const addBulk=()=>{
+    if(selected.size===0)return;
+    const newRegs=[];const newPays=[];
+    let runningRegs=[...regs];
+    Array.from(selected).forEach(studentId=>{
+      const fee=form.paymentOverride||calcFee(studentId,runningRegs);
+      const reg={id:uid(),sessionId:session.id,studentId,fee,consentSigned:false,present:false};
+      const pay={id:uid(),registrationId:reg.id,studentId,sessionId:session.id,amount:fee,status:"unpaid",method:"",paidAt:"",invoiceNo:`INV-${Date.now()}`};
+      newRegs.push(reg);newPays.push(pay);runningRegs.push(reg);
+    });
+    setDB({registrations:[...(db.registrations||[]),...newRegs],payments:[...(db.payments||[]),...newPays]});
+    logAction(actor.role,actor.name,"BULK_REGISTER",`${selected.size} students`);
+    refresh();setShowModal(false);setSelected(new Set());setForm({studentId:"",paymentOverride:""});
   };
   const updatePay=(payId,status)=>{setDB({payments:(db.payments||[]).map(p=>p.id===payId?{...p,status,paidAt:status==="paid"?new Date().toISOString():p.paidAt}:p)});logAction(actor.role,actor.name,"UPDATE_PAYMENT",`${payId} -> ${status}`);refresh();};
   const toggleConsent=(regId)=>{setDB({registrations:(db.registrations||[]).map(r=>r.id===regId?{...r,consentSigned:!r.consentSigned}:r)});refresh();};
@@ -1245,31 +1613,32 @@ function SessionRegistrations({session,db,refresh,actor}){
     const campType=(db.campTypes||[]).find(c=>c.id===session.campTypeId);
     if(pay)generateInvoicePDF(pay,student,session,school,campType,getDB().settings);
   };
-  const available=schoolStudents.filter(s=>!regs.map(r=>r.studentId).includes(s.id));
   const totalFees=regs.reduce((a,r)=>a+parseFloat(r.fee||0),0);
   const editable=canEdit(actor,"sessions");
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
       <div style={{fontSize:13,color:"var(--muted)"}}>{regs.length} registered · Total: <b style={{color:"var(--text)"}}>{fmt(totalFees)}</b></div>
-      {editable&&<button onClick={()=>setShowModal(true)} style={btn("primary")}>+ Register Student</button>}
+      {editable&&<div style={{display:"flex",gap:6}}>
+        <button onClick={()=>{setMultiMode(false);setShowModal(true);}} style={{...btn("ghost"),fontSize:12}}>+ Register One</button>
+        <button onClick={()=>{setMultiMode(true);setShowModal(true);}} style={{...btn("primary"),fontSize:12}}>+ Register Multiple</button>
+      </div>}
     </div>
     {regs.length===0?<EmptyState icon="📋" text="No registrations yet."/>:
     <div style={{display:"grid",gap:8}}>
       {regs.map(reg=>{
         const student=(db.students||[]).find(s=>s.id===reg.studentId);
         const pay=(db.payments||[]).find(p=>p.registrationId===reg.id);
-        return <div key={reg.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,alignItems:"center"}}>
+        return <div key={reg.id} style={{background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,alignItems:"center"}}>
           <div>
-            <div style={{fontWeight:600,fontSize:13}}>{student?.name||"—"}</div>
-            <div style={{fontSize:12,color:"var(--muted)"}}>{student?.parentName} · {student?.parentPhone}</div>
-            <div style={{fontSize:11,color:"var(--muted)"}}>Inv: {pay?.invoiceNo}</div>
+            <div style={{fontWeight:600,fontSize:13}}>{student?.name||"—"}{student?.nameChinese&&<span style={{color:"var(--muted)",fontWeight:400}}> ({student.nameChinese})</span>}</div>
+            <div style={{fontSize:12,color:"var(--muted)"}}>{student?.className&&`${student.className} · `}{student?.parentName} · {student?.parentPhone}</div>
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
             <span style={{fontSize:13,fontWeight:700}}>{fmt(reg.fee)}</span>
             <Badge label={pay?.status||"—"} color={pay?.status==="paid"?"green":pay?.status==="refunded"?"red":"amber"}/>
             <Badge label={reg.consentSigned?"Consent ✓":"No consent"} color={reg.consentSigned?"green":"red"}/>
-            {editable&&pay?.status==="unpaid"&&<button onClick={()=>updatePay(pay.id,"paid")} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Mark Paid</button>}
-            {editable&&pay?.status==="paid"&&<button onClick={()=>updatePay(pay.id,"refunded")} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Refund</button>}
+            {userCanSub(actor,"payments_markpaid")&&pay?.status==="unpaid"&&<button onClick={()=>updatePay(pay.id,"paid")} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Mark Paid</button>}
+            {userCanSub(actor,"payments_markpaid")&&pay?.status==="paid"&&<button onClick={()=>updatePay(pay.id,"refunded")} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Refund</button>}
             {editable&&<button onClick={()=>toggleConsent(reg.id)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>Consent</button>}
             <button onClick={()=>printInvoice(reg)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>🖨 Invoice</button>
             {editable&&<button onClick={()=>removeReg(reg.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>✕</button>}
@@ -1277,63 +1646,149 @@ function SessionRegistrations({session,db,refresh,actor}){
         </div>;
       })}
     </div>}
-    {showModal&&editable&&<Modal title="Register Student" onClose={()=>setShowModal(false)}>
-      <Field label="Student"><select style={inp} value={form.studentId} onChange={e=>setForm({...form,studentId:e.target.value})}>
-        <option value="">Select student</option>{available.map(s=><option key={s.id} value={s.id}>{s.name} — {s.className}</option>)}</select></Field>
-      {form.studentId&&ct&&<div style={{background:"var(--surface2)",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:13}}>
-        Calculated fee: <b>{fmt(calcFee(form.studentId))}</b>{ct.discountable&&<span style={{color:"var(--muted)",fontSize:11}}> (sibling discount auto-applied)</span>}</div>}
-      <Field label="Override Fee" hint="Leave blank to use calculated fee">
-        <input type="number" style={inp} value={form.paymentOverride} onChange={e=>setForm({...form,paymentOverride:e.target.value})} placeholder={ct?`Default: ${fmt(ct.fee)}`:""}/></Field>
-      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-        <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
-        <button onClick={addReg} style={btn("primary")}>Register</button>
-      </div>
+    {showModal&&editable&&<Modal title={multiMode?"Register Multiple Students":"Register Student"} onClose={()=>{setShowModal(false);setSelected(new Set());}} wide>
+      {!multiMode?<>
+        <Field label="Student"><select style={inp} value={form.studentId} onChange={e=>setForm({...form,studentId:e.target.value})}>
+          <option value="">Select student</option>{available.map(s=><option key={s.id} value={s.id}>{s.name}{s.nameChinese?` (${s.nameChinese})`:""} — {s.className}</option>)}</select></Field>
+        {form.studentId&&ct&&<div style={{background:"var(--surface2)",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:13}}>
+          Calculated fee: <b>{fmt(calcFee(form.studentId))}</b>{ct.discountable&&<span style={{color:"var(--muted)",fontSize:11}}> (sibling discount auto-applied)</span>}</div>}
+        <Field label="Override Fee" hint="Leave blank to use calculated fee">
+          <input type="number" style={inp} value={form.paymentOverride} onChange={e=>setForm({...form,paymentOverride:e.target.value})} placeholder={ct?`Default: ${fmt(ct.fee)}`:""}/>
+        </Field>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
+          <button onClick={addReg} style={btn("primary")}>Register</button>
+        </div>
+      </>:<>
+        {/* Filters row */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
+          <div><div style={{fontSize:10,color:"var(--muted)",marginBottom:3,fontWeight:700}}>CLASS</div>
+            <select style={{...inp,fontSize:12}} value={filterClass} onChange={e=>setFilterClass(e.target.value)}>
+              <option value="">All</option>{uniqueClasses.map(c=><option key={c}>{c}</option>)}
+            </select></div>
+          <div><div style={{fontSize:10,color:"var(--muted)",marginBottom:3,fontWeight:700}}>GENDER</div>
+            <select style={{...inp,fontSize:12}} value={filterGender} onChange={e=>setFilterGender(e.target.value)}>
+              <option value="">Any</option><option>Male</option><option>Female</option>
+            </select></div>
+          <div><div style={{fontSize:10,color:"var(--muted)",marginBottom:3,fontWeight:700}}>AGE</div>
+            <select style={{...inp,fontSize:12}} value={filterAge} onChange={e=>setFilterAge(e.target.value)}>
+              <option value="">Any</option>{uniqueAges.map(a=><option key={a}>{a}</option>)}
+            </select></div>
+        </div>
+        {/* Student list with checkboxes */}
+        <div style={{border:"1px solid var(--border2)",borderRadius:8,overflow:"hidden",marginBottom:10,maxHeight:320,overflowY:"auto"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"var(--surface2)",borderBottom:"1px solid var(--border2)"}}>
+            <input type="checkbox" checked={filteredAvailable.length>0&&filteredAvailable.every(s=>selected.has(s.id))} onChange={toggleAll} style={{width:14,height:14}}/>
+            <span style={{fontSize:11,fontWeight:700,color:"var(--muted)"}}>Select all ({filteredAvailable.length})</span>
+          </div>
+          {filteredAvailable.length===0?<div style={{padding:"16px",fontSize:12,color:"var(--muted)",textAlign:"center"}}>No eligible students match filters.</div>:
+          filteredAvailable.map(s=>{
+            const fee=calcFee(s.id);
+            const sibsRegistered=(db.students||[]).filter(o=>o.parentPhone===s.parentPhone&&o.id!==s.id&&regs.some(r=>r.studentId===o.id));
+            const isSib=sibsRegistered.length>0;
+            return <label key={s.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderBottom:"1px solid var(--border)",cursor:"pointer",background:selected.has(s.id)?"rgba(0,230,118,0.06)":"transparent"}}>
+              <input type="checkbox" checked={selected.has(s.id)} onChange={()=>toggleSel(s.id)} style={{width:14,height:14,flexShrink:0}}/>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600}}>{s.name}{s.nameChinese&&<span style={{fontWeight:400,color:"var(--muted)"}}> ({s.nameChinese})</span>}</div>
+                <div style={{fontSize:11,color:"var(--muted)"}}>{[s.className,s.gender,s.dob?`Age ${calcAge(s.dob)}`:null].filter(Boolean).join(" · ")}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:12,fontWeight:700,color:"var(--accent)"}}>{fmt(fee)}</div>
+                {isSib&&<div style={{fontSize:10,color:"var(--purple)"}}>👨‍👩‍👧 sib: {sibsRegistered.map(o=>o.className||o.name).join(", ")}</div>}
+              </div>
+            </label>;
+          })}
+        </div>
+        <div style={{background:"var(--surface2)",borderRadius:8,padding:"8px 12px",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:12,color:"var(--muted)"}}>{selected.size} selected</span>
+          <span style={{fontSize:13,fontWeight:700,color:"var(--accent)"}}>Est. total: {fmt(bulkTotal)}</span>
+        </div>
+        <Field label="Override Fee for all selected" hint="Leave blank to use individual calculated fees">
+          <input type="number" style={inp} value={form.paymentOverride} onChange={e=>setForm({...form,paymentOverride:e.target.value})} placeholder="Optional override"/>
+        </Field>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <button onClick={()=>{setShowModal(false);setSelected(new Set());}} style={btn("ghost")}>Cancel</button>
+          <button onClick={addBulk} disabled={selected.size===0} style={{...btn("primary"),opacity:selected.size===0?0.5:1}}>Register {selected.size>0?`${selected.size} Students`:""}</button>
+        </div>
+      </>}
     </Modal>}
   </div>;
 }
 
 function SessionCrew({session,db,refresh,actor}){
   const [showModal,setShowModal]=useState(false);
-  const [form,setForm]=useState({crewId:"",role:"Facilitator",feeOverride:""});
+  const [form,setForm]=useState({crewId:"",role:"Facilitator",feeOverride:"",hoursWorked:""});
+  const [editHours,setEditHours]=useState(null); // {id, hours}
   const assignments=(db.crewAssignments||[]).filter(a=>a.sessionId===session.id);
   const ct=(db.campTypes||[]).find(c=>c.id===session.campTypeId);
   const available=(db.crew||[]).filter(c=>!assignments.map(a=>a.crewId).includes(c.id));
   const tiers=ct?.crewFeeTiers&&ct.crewFeeTiers.length>0?ct.crewFeeTiers:null;
 
-  // Priority: role-based tier from the Camp Type first (most specific to this camp),
-  // then this crew member's own default fee, then the legacy flat crewFee, then 0.
-  const suggestedFee=(role,crewId)=>{
-    const tier=tiers?.find(t=>t.role===role);
-    if(tier&&tier.fee)return tier.fee;
+  const getTier=(role)=>tiers?.find(t=>t.role===role);
+  const suggestedFee=(role,crewId,hours)=>{
+    const tier=getTier(role);
+    if(tier&&tier.fee){
+      if(tier.payType==="hour"){
+        const h=hours||parseFloat(tier.stdHours||0)||0;
+        return (parseFloat(tier.fee||0)*h).toFixed(2);
+      }
+      return tier.fee;
+    }
     const crewMember=(db.crew||[]).find(c=>c.id===crewId);
     if(crewMember?.defaultFee)return crewMember.defaultFee;
     return ct?.crewFee||0;
   };
+  const isHourly=(role)=>getTier(role)?.payType==="hour";
+  const stdHours=(role)=>parseFloat(getTier(role)?.stdHours||0)||"";
 
   const add=()=>{
     if(!form.crewId)return;
-    const fee=form.feeOverride||suggestedFee(form.role,form.crewId);
-    setDB({crewAssignments:[...(db.crewAssignments||[]),{id:uid(),sessionId:session.id,crewId:form.crewId,role:form.role,fee,paid:false}]});
+    const tier=getTier(form.role);
+    const hours=form.hoursWorked||stdHours(form.role)||null;
+    const fee=form.feeOverride||suggestedFee(form.role,form.crewId,hours);
+    const payType=tier?.payType||"session";
+    setDB({crewAssignments:[...(db.crewAssignments||[]),{id:uid(),sessionId:session.id,crewId:form.crewId,role:form.role,fee,paid:false,payType,hoursWorked:hours||null}]});
     logAction(actor.role,actor.name,"ASSIGN_CREW",form.crewId);
-    refresh();setShowModal(false);setForm({crewId:"",role:"Facilitator",feeOverride:""});
+    refresh();setShowModal(false);setForm({crewId:"",role:"Facilitator",feeOverride:"",hoursWorked:""});
+  };
+  const saveHours=(id)=>{
+    if(!editHours)return;
+    const a=(db.crewAssignments||[]).find(x=>x.id===id);
+    if(!a)return;
+    const tier=getTier(a.role);
+    const h=parseFloat(editHours.hours||0);
+    const fee=tier?.payType==="hour"?(parseFloat(tier.fee||0)*h).toFixed(2):a.fee;
+    setDB({crewAssignments:(db.crewAssignments||[]).map(x=>x.id===id?{...x,hoursWorked:h,fee}:x)});
+    setEditHours(null);refresh();
   };
   const togglePaid=(id)=>{setDB({crewAssignments:(db.crewAssignments||[]).map(a=>a.id===id?{...a,paid:!a.paid}:a)});refresh();};
   const remove=(id)=>{setDB({crewAssignments:(db.crewAssignments||[]).filter(a=>a.id!==id)});refresh();};
   const editable=canEdit(actor,"sessions");
   const roleOptions=tiers?tiers.map(t=>t.role).filter(Boolean):["Lead Facilitator","Facilitator","Assistant","Driver","Support"];
+  const totalHours=assignments.reduce((a,x)=>a+parseFloat(x.hoursWorked||0),0);
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-      <div style={{fontSize:13,color:"var(--muted)"}}>{assignments.length} crew assigned</div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
+      <div style={{fontSize:13,color:"var(--muted)"}}>{assignments.length} crew assigned{totalHours>0&&<span> · Total: <b>{totalHours}h</b></span>}</div>
       {editable&&<button onClick={()=>setShowModal(true)} style={btn("primary")}>+ Assign Crew</button>}
     </div>
     {assignments.length===0?<EmptyState icon="👥" text="No crew assigned yet."/>:
     <div style={{display:"grid",gap:8}}>
       {assignments.map(a=>{
         const crew=(db.crew||[]).find(c=>c.id===a.crewId);
-        return <div key={a.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,alignItems:"center"}}>
-          <div><div style={{fontWeight:600,fontSize:13}}>{crew?.name||"—"}</div><div style={{fontSize:12,color:"var(--muted)"}}>{a.role} · {"★".repeat(Math.round(crew?.rating||0))}</div></div>
-          <div style={{display:"flex",gap:6,alignItems:"center"}}>
-            <span style={{fontWeight:700,fontSize:13}}>{fmt(a.fee)}</span>
+        const hourly=a.payType==="hour";
+        return <div key={a.id} style={{background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,alignItems:"center"}}>
+          <div>
+            <div style={{fontWeight:600,fontSize:13}}>{crew?.name||"—"}</div>
+            <div style={{fontSize:12,color:"var(--muted)"}}>{a.role} · {"★".repeat(Math.round(crew?.rating||0))} {hourly&&<span style={{color:"var(--amber)"}}>· Per Hour</span>}</div>
+            {hourly&&<div style={{fontSize:11,color:"var(--muted)"}}>
+              Hours: <b>{a.hoursWorked||0}h</b>
+              {editable&&editHours?.id===a.id
+                ?<span style={{marginLeft:8}}><input type="number" style={{...inp,width:60,display:"inline",padding:"2px 6px",fontSize:11}} value={editHours.hours} onChange={e=>setEditHours({...editHours,hours:e.target.value})}/><button onClick={()=>saveHours(a.id)} style={{...btn("primary"),fontSize:10,padding:"2px 8px",marginLeft:4}}>Save</button><button onClick={()=>setEditHours(null)} style={{...btn("ghost"),fontSize:10,padding:"2px 6px",marginLeft:2}}>✕</button></span>
+                :editable&&<button onClick={()=>setEditHours({id:a.id,hours:a.hoursWorked||0})} style={{fontSize:10,background:"none",border:"none",cursor:"pointer",color:"var(--accent)",marginLeft:4}}>edit</button>}
+            </div>}
+          </div>
+          <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+            <span style={{fontWeight:700,fontSize:13,color:"var(--accent)"}}>{fmt(a.fee)}</span>
             <Badge label={a.paid?"Paid":"Unpaid"} color={a.paid?"green":"amber"}/>
             {editable&&<button onClick={()=>togglePaid(a.id)} style={{...btn("ghost"),fontSize:11,padding:"3px 8px"}}>{a.paid?"Unmark":"Mark Paid"}</button>}
             {editable&&<button onClick={()=>remove(a.id)} style={{...btn("danger"),fontSize:11,padding:"3px 8px"}}>Remove</button>}
@@ -1344,10 +1799,13 @@ function SessionCrew({session,db,refresh,actor}){
     {showModal&&editable&&<Modal title="Assign Crew" onClose={()=>setShowModal(false)}>
       <Field label="Crew Member"><select style={inp} value={form.crewId} onChange={e=>setForm({...form,crewId:e.target.value})}>
         <option value="">Select crew</option>{available.map(c=><option key={c.id} value={c.id}>{c.name} (⭐{c.rating||"—"})</option>)}</select></Field>
-      <Field label="Role"><select style={inp} value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>
+      <Field label="Role"><select style={inp} value={form.role} onChange={e=>setForm({...form,role:e.target.value,hoursWorked:String(stdHours(e.target.value)||"")})}>
         {roleOptions.map(r=><option key={r}>{r}</option>)}</select></Field>
-      <Field label="Fee (RM)" hint={`Suggested: ${fmt(suggestedFee(form.role,form.crewId))} (role tier → this person's default → camp type default)`}>
-        <input type="number" style={inp} value={form.feeOverride} onChange={e=>setForm({...form,feeOverride:e.target.value})} placeholder={fmt(suggestedFee(form.role,form.crewId))}/></Field>
+      {isHourly(form.role)&&<Field label="Hours Worked" hint={`Standard hours for this role: ${stdHours(form.role)||"not set"}`}>
+        <input type="number" style={inp} value={form.hoursWorked} onChange={e=>setForm({...form,hoursWorked:e.target.value})} placeholder={String(stdHours(form.role)||"")}/>
+      </Field>}
+      <Field label="Fee (RM)" hint={isHourly(form.role)?`Rate: ${fmt(getTier(form.role)?.fee||0)}/hr × ${form.hoursWorked||stdHours(form.role)||0}h = ${fmt(suggestedFee(form.role,form.crewId,form.hoursWorked||stdHours(form.role)))}`:`Suggested: ${fmt(suggestedFee(form.role,form.crewId))} (role tier → personal default → flat rate)`}>
+        <input type="number" style={inp} value={form.feeOverride} onChange={e=>setForm({...form,feeOverride:e.target.value})} placeholder={fmt(suggestedFee(form.role,form.crewId,form.hoursWorked||stdHours(form.role)))}/></Field>
       <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
         <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
         <button onClick={add} style={btn("primary")}>Assign</button>
@@ -1482,30 +1940,36 @@ function Crew({db,refresh,actor,onHome}){
 // ── INVENTORY ──
 function Inventory({db,refresh,actor,onHome}){
   const [showModal,setShowModal]=useState(false);const [editing,setEditing]=useState(null);const [form,setForm]=useState({});
+  const [preview,setPreview]=useState(null);
   const inventory=db.inventory||[];
-  const openAdd=()=>{setForm({id:uid(),name:"",category:"materials",sku:"",unitCost:"",qty:0,unit:"pcs",minQty:5,notes:""});setEditing(null);setShowModal(true);};
+  const openAdd=()=>{setForm({id:uid(),name:"",category:"materials",sku:"",unitCost:"",qty:0,unit:"pcs",minQty:5,notes:"",photo:""});setEditing(null);setShowModal(true);};
   const openEdit=(i)=>{setForm({...i});setEditing(i.id);setShowModal(true);};
   const save=()=>{const list=editing?inventory.map(i=>i.id===editing?form:i):[...inventory,form];setDB({inventory:list});logAction(actor.role,actor.name,editing?"EDIT_ITEM":"ADD_ITEM",form.name);refresh();setShowModal(false);};
   const del=(id)=>{const i=inventory.find(x=>x.id===id);if(window.confirm("Delete?")){setDB({inventory:inventory.filter(i=>i.id!==id)});logAction(actor.role,actor.name,"DELETE_ITEM",i?.name);refresh();}};
   const adjust=(id,d)=>{setDB({inventory:inventory.map(i=>i.id===id?{...i,qty:Math.max(0,(parseInt(i.qty)||0)+d)}:i)});refresh();};
+  const handlePhoto=(e)=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>setForm({...form,photo:ev.target.result});reader.readAsDataURL(file);};
   const totalVal=inventory.reduce((a,i)=>a+parseFloat(i.unitCost||0)*parseInt(i.qty||0),0);
   const editable=canEdit(actor,"inventory");
   return <div>
     <PageHeader crumbs={[{label:"Dashboard",nav:onHome},"Inventory"]} onHome={onHome} title="Inventory" action={editable&&<button onClick={openAdd} style={btn("primary")}>+ Add Item</button>}/>
-    <div style={{fontSize:12,color:"var(--muted)",marginTop:-12,marginBottom:14}}>Total value: {fmt(totalVal)}</div>
+    <div style={{fontSize:12,color:"var(--muted)",marginTop:-12,marginBottom:14}}>Total inventory value: <b style={{color:"var(--accent)"}}>{fmt(totalVal)}</b></div>
     {inventory.length===0?<EmptyState icon="📦" text="No inventory items yet."/>:
     <div style={{display:"grid",gap:10}}>
       {inventory.map(item=>{
         const low=parseInt(item.qty)<=parseInt(item.minQty||0);
-        return <div key={item.id} style={{background:"var(--surface)",border:`1px solid ${low?"#fbbf24":"var(--border)"}`,borderRadius:12,padding:"12px 16px"}}>
+        return <div key={item.id} style={{background:"var(--surface)",border:`1px solid ${low?"#fbbf24":"var(--border2)"}`,borderRadius:12,padding:"12px 16px",boxShadow:low?"0 0 0 1px rgba(251,191,36,0.2)":"none"}}>
           <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,alignItems:"center"}}>
-            <div>
-              <div style={{fontWeight:700,fontSize:14}}>{item.name}{low&&<span style={{color:"#f59e0b",fontSize:11,marginLeft:6}}>⚠ Low stock</span>}</div>
-              <div style={{fontSize:12,color:"var(--muted)"}}>{item.category} · SKU: {item.sku||"—"} · {fmt(item.unitCost)}/{item.unit} · Value: {fmt(parseFloat(item.unitCost||0)*parseInt(item.qty||0))}</div>
+            <div style={{display:"flex",gap:10,alignItems:"flex-start",flex:1}}>
+              {item.photo&&<img src={item.photo} onClick={()=>setPreview(item.photo)} style={{width:48,height:48,objectFit:"cover",borderRadius:8,cursor:"pointer",flexShrink:0,border:"1px solid var(--border2)"}}/>}
+              <div>
+                <div style={{fontWeight:700,fontSize:14}}>{item.name}{low&&<span style={{color:"#fbbf24",fontSize:11,marginLeft:6}}>⚠ Low stock</span>}</div>
+                <div style={{fontSize:12,color:"var(--muted)"}}>{item.category}{item.sku&&` · SKU: ${item.sku}`} · {fmt(item.unitCost)}/{item.unit} · Value: <b>{fmt(parseFloat(item.unitCost||0)*parseInt(item.qty||0))}</b></div>
+                {item.notes&&<div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>{item.notes}</div>}
+              </div>
             </div>
-            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
               {editable&&<button onClick={()=>adjust(item.id,-1)} style={{...btn("ghost"),padding:"4px 10px",fontSize:16}}>−</button>}
-              <span style={{fontWeight:800,fontSize:16,minWidth:28,textAlign:"center"}}>{item.qty}</span>
+              <span style={{fontWeight:800,fontSize:16,minWidth:28,textAlign:"center",color:low?"#fbbf24":"var(--text)"}}>{item.qty}</span>
               {editable&&<button onClick={()=>adjust(item.id,1)} style={{...btn("ghost"),padding:"4px 10px",fontSize:16}}>+</button>}
               <span style={{color:"var(--muted)",fontSize:12}}>{item.unit}</span>
               {editable&&<button onClick={()=>openEdit(item)} style={btn("ghost")}>Edit</button>}
@@ -1515,6 +1979,9 @@ function Inventory({db,refresh,actor,onHome}){
         </div>;
       })}
     </div>}
+    {preview&&<Modal title="Item Photo" onClose={()=>setPreview(null)}>
+      <img src={preview} style={{width:"100%",borderRadius:8,maxHeight:400,objectFit:"contain"}}/>
+    </Modal>}
     {showModal&&editable&&<Modal title={editing?"Edit Item":"Add Item"} onClose={()=>setShowModal(false)}>
       <Field label="Item Name"><input style={inp} value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
@@ -1526,6 +1993,10 @@ function Inventory({db,refresh,actor,onHome}){
         <Field label="Current Qty"><input type="number" style={inp} value={form.qty||0} onChange={e=>setForm({...form,qty:e.target.value})}/></Field>
         <Field label="Low Stock Alert at"><input type="number" style={inp} value={form.minQty||5} onChange={e=>setForm({...form,minQty:e.target.value})}/></Field>
       </div>
+      <Field label="Item Photo" hint="Take a photo or pick from gallery — stored locally with the item">
+        <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{fontSize:12,marginBottom:6,color:"var(--text)"}}/>
+        {form.photo&&<img src={form.photo} style={{width:"100%",maxHeight:180,objectFit:"contain",borderRadius:8,marginTop:6,border:"1px solid var(--border2)"}}/>}
+      </Field>
       <Field label="Notes"><textarea style={{...inp,minHeight:50}} value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
       <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
         <button onClick={()=>setShowModal(false)} style={btn("ghost")}>Cancel</button>
@@ -2068,6 +2539,10 @@ function BackupRestore({db,refresh,actor,onHome}){
       </div>
     </Modal>}
 
+    {/* ===== CSV IMPORT SECTION ===== */}
+    <SectionHeader label="⬆ Import Data from CSV"/>
+    <CsvImporter db={db} refresh={refresh} actor={actor}/>
+
     {/* ===== DECRYPT TOOL ===== */}
     <SectionHeader label="🔓 Decrypt a Downloaded File"/>
     <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:18,marginBottom:16}}>
@@ -2375,6 +2850,246 @@ function PermissionEditor({permissions,onChange}){
     })}
   </div>;
 }
+
+// ── CSV IMPORTER COMPONENT ──
+function CsvImporter({db,refresh,actor}){
+  const [activeType,setActiveType]=useState(null);
+  const [replaceMode,setReplaceMode]=useState(false);
+  const [result,setResult]=useState(null); // {preview, errors, readyRows, type}
+  const [busy,setBusy]=useState(false);
+
+  const IMPORT_TYPES=[
+    {key:"schools",label:"Schools",icon:"🏛",color:"#a855f7"},
+    {key:"students",label:"Students",icon:"🎓",color:"#3b82f6"},
+    {key:"crew",label:"Crew",icon:"👷",color:"#a78bfa"},
+    {key:"campTypes",label:"Camp Types",icon:"🦕",color:"#fb923c"},
+    {key:"sessions",label:"Sessions",icon:"📆",color:"#60a5fa"},
+    {key:"registrations",label:"Registrations",icon:"📋",color:"#34d399"},
+    {key:"inventory",label:"Inventory",icon:"📦",color:"#fbbf24"},
+  ];
+
+  const parseCSV=(text)=>{
+    const lines=text.replace(/\r\n/g,"\n").replace(/\r/g,"\n").split("\n").filter(l=>l.trim());
+    const parseRow=(line)=>{const fields=[];let f="",inQ=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==='"'){if(inQ&&line[i+1]==='"'){f+='"';i++;}else inQ=!inQ;}else if(c===','&&!inQ){fields.push(f.trim());f="";}else f+=c;}fields.push(f.trim());return fields;};
+    const headers=parseRow(lines[0]).map(h=>h.replace(/^"|"$/g,"").trim());
+    return lines.slice(1).filter(l=>l.trim()&&!l.startsWith("EXAMPLE")).map(l=>{
+      const vals=parseRow(l);const obj={};headers.forEach((h,i)=>obj[h]=(vals[i]||"").replace(/^"|"$/g,"").trim());return obj;
+    });
+  };
+
+  const processRows=(type,rows)=>{
+    const errors=[]; const readyRows=[]; const preview=[];
+    const schools=db.schools||[];const students=db.students||[];const campTypes=db.campTypes||[];
+    const sessions=db.sessions||[];const crew=db.crew||[];
+
+    rows.forEach((row,i)=>{
+      const rowNum=i+2; // +2 because header is row 1
+      try{
+        if(type==="schools"){
+          if(!row["School Name"]){errors.push(`Row ${rowNum}: School Name is required`);return;}
+          const dup=schools.find(s=>s.name?.toLowerCase()===row["School Name"].toLowerCase());
+          const record={id:dup?.id||uid(),name:row["School Name"],address:row["Address"]||"",principal:row["Principal Name"]||"",phone:row["Phone"]||"",email:row["Email"]||"",mapUrl:row["Google Map URL"]||"",notes:row["Notes"]||""};
+          preview.push({label:row["School Name"],sub:row["Address"]||"",isDup:!!dup});
+          readyRows.push({record,isDup:!!dup,dupId:dup?.id});
+
+        }else if(type==="students"){
+          if(!row["Full Name"]){errors.push(`Row ${rowNum}: Full Name is required`);return;}
+          const schoolName=row["School Name"]||"";
+          const school=schools.find(s=>s.name?.toLowerCase()===schoolName.toLowerCase());
+          if(schoolName&&!school){errors.push(`Row ${rowNum}: School "${schoolName}" not found — add the school first`);return;}
+          // Duplicate: IC first, then Name+School
+          const ic=(row["IC/MyKid No"]||"").replace(/-/g,"");
+          let dup=ic?students.find(s=>s.ic?.replace(/-/g,"")===ic):null;
+          if(!dup&&school)dup=students.find(s=>s.name?.toLowerCase()===row["Full Name"].toLowerCase()&&s.schoolId===school?.id);
+          const extraParentPhones=(row["Parent Phone 2"]||"").split(";").map(p=>p.trim()).filter(Boolean);
+          const record={id:dup?.id||uid(),name:row["Full Name"],nameChinese:row["Chinese Name"]||"",gender:row["Gender"]||"",ic:row["IC/MyKid No"]||"",dob:row["Date of Birth (YYYY-MM-DD)"]||"",className:row["Class Name"]||"",tshirtSize:row["T-Shirt Size"]||"",schoolId:school?.id||"",address:row["Address"]||"",allergies:row["Allergies/Medical"]||"",parentName:row["Parent Name"]||"",parentRelation:row["Parent Relation"]||"Mother",parentPhone:row["Parent Phone"]||"",parentPhoneExtra:extraParentPhones,bankName:row["Bank Name"]||"",bankAccountNo:row["Bank Account No"]||"",emergencyName:row["Emergency Name"]||"",emergencyRelation:row["Emergency Relation"]||"Guardian",emergencyPhone:row["Emergency Phone"]||"",emergencyPhoneExtra:[],notes:row["Notes"]||""};
+          preview.push({label:row["Full Name"]+(row["Chinese Name"]?` (${row["Chinese Name"]})`:""),sub:`${row["Class Name"]||""} · ${schoolName}`,isDup:!!dup});
+          readyRows.push({record,isDup:!!dup,dupId:dup?.id});
+
+        }else if(type==="crew"){
+          if(!row["Full Name"]){errors.push(`Row ${rowNum}: Full Name is required`);return;}
+          const nric=(row["NRIC"]||"").replace(/-/g,"");
+          const dup=nric?crew.find(c=>c.nric?.replace(/-/g,"")===nric):crew.find(c=>c.name?.toLowerCase()===row["Full Name"].toLowerCase());
+          const record={id:dup?.id||uid(),name:row["Full Name"],nameChinese:row["Chinese Name"]||"",gender:row["Gender"]||"",nric:row["NRIC"]||"",dob:row["Date of Birth (YYYY-MM-DD)"]||"",phone:row["Phone"]||"",email:row["Email"]||"",address:row["Address"]||"",defaultFee:row["Default Fee Per Session (RM)"]||"",rating:parseInt(row["Performance Rating (1-5)"]||3),notes:row["Notes"]||""};
+          preview.push({label:row["Full Name"],sub:`${row["Phone"]||""} · NRIC: ${row["NRIC"]||""}`,isDup:!!dup});
+          readyRows.push({record,isDup:!!dup,dupId:dup?.id});
+
+        }else if(type==="campTypes"){
+          if(!row["Camp Name"]){errors.push(`Row ${rowNum}: Camp Name is required`);return;}
+          const dup=campTypes.find(c=>c.name?.toLowerCase()===row["Camp Name"].toLowerCase());
+          const record={id:dup?.id||uid(),name:row["Camp Name"],fee:row["Camp Fee (RM)"]||"",materialCost:row["Material Cost (RM)"]||"",mealCost:row["Meal Cost Per Head (RM)"]||"",discountable:(row["Sibling Discount Enabled (YES/NO)"]||"").toUpperCase()==="YES",sibling2Pct:row["2nd Sibling Discount %"]||10,sibling3Pct:row["3rd Sibling Discount %"]||20,description:row["Description"]||"",crewFeeTiers:[],extraCosts:[]};
+          preview.push({label:row["Camp Name"],sub:`Fee: RM${row["Camp Fee (RM)"]||"?"}`,isDup:!!dup});
+          readyRows.push({record,isDup:!!dup,dupId:dup?.id});
+
+        }else if(type==="sessions"){
+          const school=schools.find(s=>s.name?.toLowerCase()===(row["School Name"]||"").toLowerCase());
+          if(!school){errors.push(`Row ${rowNum}: School "${row["School Name"]}" not found`);return;}
+          const ct=campTypes.find(c=>c.name?.toLowerCase()===(row["Camp Type Name"]||"").toLowerCase());
+          if(!ct){errors.push(`Row ${rowNum}: Camp Type "${row["Camp Type Name"]}" not found`);return;}
+          if(!row["Date (YYYY-MM-DD)"]){errors.push(`Row ${rowNum}: Date is required`);return;}
+          const dup=sessions.find(s=>s.schoolId===school.id&&s.campTypeId===ct.id&&s.date===row["Date (YYYY-MM-DD)"]);
+          const record={id:dup?.id||uid(),schoolId:school.id,campTypeId:ct.id,date:row["Date (YYYY-MM-DD)"],time:row["Time (HH:MM)"]||"",status:(row["Status (scheduled/completed/cancelled)"]||"scheduled").toLowerCase(),notes:row["Notes"]||""};
+          preview.push({label:`${row["School Name"]} — ${row["Camp Type Name"]}`,sub:row["Date (YYYY-MM-DD)"],isDup:!!dup});
+          readyRows.push({record,isDup:!!dup,dupId:dup?.id});
+
+        }else if(type==="registrations"){
+          const school=schools.find(s=>s.name?.toLowerCase()===(row["School Name"]||"").toLowerCase());
+          if(!school){errors.push(`Row ${rowNum}: School "${row["School Name"]}" not found`);return;}
+          const ct=campTypes.find(c=>c.name?.toLowerCase()===(row["Camp Type Name"]||"").toLowerCase());
+          if(!ct){errors.push(`Row ${rowNum}: Camp Type "${row["Camp Type Name"]}" not found`);return;}
+          const session=sessions.find(s=>s.schoolId===school.id&&s.campTypeId===ct.id&&s.date===row["Session Date (YYYY-MM-DD)"]);
+          if(!session){errors.push(`Row ${rowNum}: Session on ${row["Session Date (YYYY-MM-DD)"]} not found`);return;}
+          const ic=(row["Student IC/MyKid"]||"").replace(/-/g,"");
+          let student=ic?students.find(s=>s.ic?.replace(/-/g,"")===ic):null;
+          if(!student)student=students.find(s=>s.name?.toLowerCase()===(row["Student Full Name"]||"").toLowerCase()&&s.schoolId===school.id);
+          if(!student){errors.push(`Row ${rowNum}: Student "${row["Student Full Name"]}" not found in school "${row["School Name"]}"`);return;}
+          const dup=(db.registrations||[]).find(r=>r.sessionId===session.id&&r.studentId===student.id);
+          const regId=dup?.id||uid();
+          const payDup=(db.payments||[]).find(p=>p.registrationId===regId);
+          const record={id:regId,sessionId:session.id,studentId:student.id,fee:row["Fee (RM)"]||ct.fee||0,consentSigned:(row["Consent Signed (YES/NO)"]||"").toUpperCase()==="YES",present:false};
+          const pay={id:payDup?.id||uid(),registrationId:regId,studentId:student.id,sessionId:session.id,amount:row["Fee (RM)"]||ct.fee||0,status:(row["Payment Status (paid/unpaid/refunded)"]||"unpaid").toLowerCase(),invoiceNo:`INV-${Date.now()}-${i}`,paidAt:""};
+          preview.push({label:student.name,sub:`${session.date} · ${row["Payment Status (paid/unpaid/refunded)"]||"unpaid"} · RM${row["Fee (RM)"]||"?"}`,isDup:!!dup});
+          readyRows.push({record,pay,isDup:!!dup});
+
+        }else if(type==="inventory"){
+          if(!row["Item Name"]){errors.push(`Row ${rowNum}: Item Name is required`);return;}
+          const dup=(db.inventory||[]).find(i=>i.name?.toLowerCase()===row["Item Name"].toLowerCase()||(row["SKU"]&&i.sku===row["SKU"]));
+          const record={id:dup?.id||uid(),name:row["Item Name"],category:row["Category (materials/merchandise/equipment/consumables/others)"]||"materials",sku:row["SKU"]||"",unitCost:row["Unit Cost (RM)"]||"",unit:row["Unit (pcs/box/set/etc)"]||"pcs",qty:parseInt(row["Current Qty"]||0),minQty:parseInt(row["Low Stock Alert At"]||5),notes:row["Notes"]||"",photo:""};
+          preview.push({label:row["Item Name"],sub:`${row["Category (materials/merchandise/equipment/consumables/others)"]||"?"} · Qty: ${row["Current Qty"]||0}`,isDup:!!dup});
+          readyRows.push({record,isDup:!!dup,dupId:dup?.id});
+        }
+      }catch(e){errors.push(`Row ${rowNum}: Unexpected error — ${e.message}`);}
+    });
+    return{preview,errors,readyRows,type};
+  };
+
+  const handleFile=(type,e)=>{
+    const file=e.target.files[0];if(!file)return;
+    setBusy(true);setResult(null);
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const rows=parseCSV(ev.target.result);
+        const res=processRows(type,rows);
+        setResult(res);setActiveType(type);
+      }catch(err){setResult({preview:[],errors:[`Failed to parse CSV: ${err.message}`],readyRows:[],type});}
+      setBusy(false);
+    };
+    reader.readAsText(file);
+    e.target.value=""; // reset so same file can be re-selected
+  };
+
+  const commitImport=()=>{
+    if(!result||result.readyRows.length===0)return;
+    const{type,readyRows}=result;
+    setBusy(true);
+    const current=getDB();
+
+    if(type==="schools"){
+      let list=replaceMode?[]:([...current.schools||[]]);
+      readyRows.forEach(({record,isDup})=>{if(isDup&&!replaceMode)list=list.map(s=>s.id===record.id?record:s);else if(!isDup)list.push(record);else list=list.map(s=>s.id===record.id?record:s);});
+      setDB({schools:list});
+
+    }else if(type==="students"){
+      let list=replaceMode?[]:([...current.students||[]]);
+      readyRows.forEach(({record,isDup})=>{if(isDup)list=list.map(s=>s.id===record.id?record:s);else list.push(record);});
+      setDB({students:list});
+
+    }else if(type==="crew"){
+      let list=replaceMode?[]:([...current.crew||[]]);
+      readyRows.forEach(({record,isDup})=>{if(isDup)list=list.map(c=>c.id===record.id?record:c);else list.push(record);});
+      setDB({crew:list});
+
+    }else if(type==="campTypes"){
+      let list=replaceMode?[]:([...current.campTypes||[]]);
+      readyRows.forEach(({record,isDup})=>{if(isDup)list=list.map(c=>c.id===record.id?record:c);else list.push(record);});
+      setDB({campTypes:list});
+
+    }else if(type==="sessions"){
+      let list=replaceMode?[]:([...current.sessions||[]]);
+      readyRows.forEach(({record,isDup})=>{if(isDup)list=list.map(s=>s.id===record.id?record:s);else list.push(record);});
+      setDB({sessions:list});
+
+    }else if(type==="registrations"){
+      let regs=replaceMode?[]:([...current.registrations||[]]);
+      let pays=replaceMode?[]:([...current.payments||[]]);
+      readyRows.forEach(({record,pay,isDup})=>{
+        if(isDup){regs=regs.map(r=>r.id===record.id?record:r);pays=pays.map(p=>p.registrationId===record.id?{...p,...pay}:p);}
+        else{regs.push(record);if(pay)pays.push(pay);}
+      });
+      setDB({registrations:regs,payments:pays});
+
+    }else if(type==="inventory"){
+      let list=replaceMode?[]:([...current.inventory||[]]);
+      readyRows.forEach(({record,isDup})=>{if(isDup)list=list.map(i=>i.id===record.id?record:i);else list.push(record);});
+      setDB({inventory:list});
+    }
+
+    logAction(actor.role,actor.name,"CSV_IMPORT",`${readyRows.length} ${type} records`);
+    refresh();
+    setResult({...result,done:true});
+    setBusy(false);
+  };
+
+  return <div style={{marginBottom:20}}>
+    <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>
+      Upload CSV files to import records directly into the app. Download templates below, fill them in (or copy from Excel), then upload here.
+      Duplicates are detected automatically (by IC/NRIC/name). Toggle "Replace section" to wipe existing records and start fresh.
+    </div>
+
+    {/* Template download row */}
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
+      {IMPORT_TYPES.map(t=><a key={t.key} href={`https://github.com/calexcl/HD-Manager/raw/main/templates/import_${t.key}.csv`} target="_blank" rel="noopener noreferrer"
+        style={{display:"flex",alignItems:"center",gap:5,fontSize:11,padding:"5px 10px",background:"var(--surface2)",border:"1px solid var(--border2)",borderRadius:7,color:"var(--muted)",textDecoration:"none"}}>
+        <span dangerouslySetInnerHTML={{__html:t.icon}}/> {t.label} template
+      </a>)}
+    </div>
+
+    {/* Import type selector + upload */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:8,marginBottom:14}}>
+      {IMPORT_TYPES.map(t=><label key={t.key} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"12px 8px",background:"var(--surface)",border:`1px solid ${activeType===t.key?t.color:"var(--border2)"}`,borderRadius:10,cursor:"pointer",fontSize:12,color:activeType===t.key?t.color:"var(--muted)",textAlign:"center",transition:"all 0.15s"}}>
+        <span style={{fontSize:20}} dangerouslySetInnerHTML={{__html:t.icon}}/>
+        <span style={{fontWeight:600}}>{t.label}</span>
+        <span style={{fontSize:10,color:"var(--muted2)"}}>Upload CSV</span>
+        <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>handleFile(t.key,e)}/>
+      </label>)}
+    </div>
+
+    {/* Replace mode toggle */}
+    <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:12,color:"var(--muted)",marginBottom:14}}>
+      <input type="checkbox" checked={replaceMode} onChange={e=>setReplaceMode(e.target.checked)} style={{width:14,height:14}}/>
+      <span><b style={{color:replaceMode?"#ef4444":"var(--muted)"}}>Replace mode</b> — wipe existing {activeType||"selected"} records and replace with CSV data (use with caution)</span>
+    </label>
+
+    {/* Preview + errors */}
+    {busy&&<div style={{padding:"16px",fontSize:12,color:"var(--muted)",textAlign:"center"}}>Parsing CSV...</div>}
+    {result&&!result.done&&<div style={{background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:10,overflow:"hidden",marginBottom:14}}>
+      <div style={{padding:"10px 14px",borderBottom:"1px solid var(--border2)",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+        <div style={{fontWeight:700,fontSize:13}}>{IMPORT_TYPES.find(t=>t.key===result.type)?.label} — Import Preview</div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <span style={{fontSize:12,color:result.readyRows.length>0?"var(--accent)":"var(--muted)"}}>{result.readyRows.length} ready · {result.readyRows.filter(r=>r.isDup).length} updates · {result.errors.length} errors</span>
+          <button onClick={commitImport} disabled={result.readyRows.length===0||busy} style={{...btn("primary"),fontSize:12,padding:"6px 14px",opacity:result.readyRows.length===0?0.4:1}}>
+            {replaceMode?"Replace & Import":"Merge & Import"} ({result.readyRows.length})
+          </button>
+        </div>
+      </div>
+      {result.errors.length>0&&<div style={{padding:"8px 14px",background:"rgba(239,68,68,0.08)",borderBottom:"1px solid var(--border2)"}}>
+        {result.errors.map((e,i)=><div key={i} style={{fontSize:11,color:"#ef4444",marginBottom:2}}>{e}</div>)}
+      </div>}
+      <div style={{maxHeight:240,overflowY:"auto"}}>
+        {result.preview.map((p,i)=><div key={i} style={{padding:"7px 14px",borderTop:i?"1px solid var(--border)":"none",display:"flex",gap:8,alignItems:"center",fontSize:12}}>
+          {p.isDup?<span style={{fontSize:10,padding:"2px 6px",background:"rgba(245,158,11,0.15)",color:"#fbbf24",borderRadius:4,flexShrink:0}}>UPDATE</span>
+            :<span style={{fontSize:10,padding:"2px 6px",background:"rgba(0,230,118,0.12)",color:"var(--accent)",borderRadius:4,flexShrink:0}}>NEW</span>}
+          <div><div style={{fontWeight:600}}>{p.label}</div><div style={{color:"var(--muted)",fontSize:11}}>{p.sub}</div></div>
+        </div>)}
+      </div>
+    </div>}
+    {result?.done&&<div style={{padding:"12px 16px",background:"rgba(0,230,118,0.1)",border:"1px solid var(--accent)",borderRadius:10,fontSize:13,color:"var(--accent)",marginBottom:14}}>
+      ✅ Import complete — {result.readyRows.length} records {replaceMode?"replaced":"merged"} successfully. <button onClick={()=>{setResult(null);setActiveType(null);}} style={{...btn("ghost"),fontSize:11,marginLeft:8}}>Import another</button>
+    </div>}
+  </div>;
+}
+
 
 // ── ACCOUNTING: SHARED LINE ITEM EDITOR ──
 function LineItemEditor({lines,onChange}){
@@ -2973,30 +3688,82 @@ function Refunds({db,refresh,actor,onHome}){
 }
 
 // ── MAIN APP ──
+// Icon color map for neon sidebar icons
+const ICON_COLORS={
+  dashboard:"#00e676",schools:"#e2e8f0",students:"#f472b6",campTypes:"#fb923c",
+  sessions:"#60a5fa",crew:"#a78bfa",inventory:"#fb923c",payments:"#34d399",
+  reports:"#f472b6",communications:"#4ade80",backup:"#e2e8f0",auditlog:"#fbbf24",
+  settings:"#94a3b8",manageUsers:"#60a5fa",
+  purchases:"#34d399",acctInvoices:"#60a5fa",bills:"#fbbf24",acctPayments:"#4ade80",
+  receipts:"#a78bfa",creditNotes:"#f87171",refunds:"#fb923c",
+};
 const MENU=[
-  {key:"dashboard",label:"Dashboard",icon:"🏠",roles:["admin","finance","user","viewer"]},
-  {key:"schools",label:"Schools",icon:"🏫",roles:["admin","user","viewer"]},
-  {key:"students",label:"All Students",icon:"🎒",roles:["admin","user","viewer"]},
-  {key:"campTypes",label:"Camp Types",icon:"🦖",roles:["admin","user","viewer"]},
-  {key:"sessions",label:"Sessions",icon:"📅",roles:["admin","user","viewer"]},
-  {key:"crew",label:"Crew",icon:"👥",roles:["admin","user","viewer"]},
+  {key:"dashboard",label:"Dashboard",icon:"⌂",roles:["admin","finance","user","viewer"]},
+  {key:"schools",label:"Schools",icon:"🏛",roles:["admin","user","viewer"]},
+  {key:"students",label:"All Students",icon:"👨‍🎓",roles:["admin","user","viewer"]},
+  {key:"campTypes",label:"Camp Types",icon:"🦕",roles:["admin","user","viewer"]},
+  {key:"sessions",label:"Sessions",icon:"📆",roles:["admin","user","viewer"]},
+  {key:"crew",label:"Crew",icon:"👷",roles:["admin","user","viewer"]},
   {key:"inventory",label:"Inventory",icon:"📦",roles:["admin","user","viewer"]},
   {key:"payments",label:"Payments",icon:"💳",roles:["admin","finance","user","viewer"]},
   {key:"reports",label:"Reports",icon:"📊",roles:["admin","finance","viewer"]},
   {key:"communications",label:"Communications",icon:"💬",roles:["admin","viewer"]},
-  {key:"backup",label:"Backup & Restore",icon:"📁",roles:["admin","finance","viewer"]},
-  {key:"auditlog",label:"Audit Log",icon:"📜",roles:["admin","viewer"]},
-  {key:"settings",label:"Settings",icon:"⚙️",roles:["admin"]},
+  {key:"backup",label:"Backup & Restore",icon:"☁",roles:["admin","finance","viewer"]},
+  {key:"auditlog",label:"Audit Log",icon:"📋",roles:["admin","viewer"]},
+  {key:"settings",label:"Settings",icon:"⚙",roles:["admin"]},
   {key:"manageUsers",label:"Manage Users",icon:"🔐",roles:["admin"]},
-  {key:"acct-divider",label:"── ACCOUNTING ──",icon:"",roles:["admin","finance"],divider:true},
-  {key:"purchases",label:"Purchases",icon:"🧾",roles:["admin","finance","viewer"]},
+  {key:"acct-divider",label:"ACCOUNTING",icon:"",roles:["admin","finance"],divider:true},
+  {key:"purchases",label:"Purchases",icon:"🛒",roles:["admin","finance","viewer"]},
   {key:"acctInvoices",label:"Invoices",icon:"📄",roles:["admin","finance","viewer"]},
-  {key:"bills",label:"Bills",icon:"📋",roles:["admin","finance","viewer"]},
-  {key:"acctPayments",label:"Payments",icon:"💰",roles:["admin","finance","viewer"]},
+  {key:"bills",label:"Bills",icon:"🧾",roles:["admin","finance","viewer"]},
+  {key:"acctPayments",label:"Acct Payments",icon:"💰",roles:["admin","finance","viewer"]},
   {key:"receipts",label:"Receipts",icon:"🧮",roles:["admin","finance","viewer"]},
-  {key:"creditNotes",label:"Credit Notes",icon:"🔄",roles:["admin","finance","viewer"]},
-  {key:"refunds",label:"Refunds",icon:"↩️",roles:["admin","finance","viewer"]},
+  {key:"creditNotes",label:"Credit Notes",icon:"↩",roles:["admin","finance","viewer"]},
+  {key:"refunds",label:"Refunds",icon:"🔄",roles:["admin","finance","viewer"]},
 ];
+
+// ── NOTIFICATION BELL ──
+function NotificationBell({db,navigate}){
+  const [open,setOpen]=useState(false);
+  const ref=useRef(null);
+  useEffect(()=>{
+    const h=(e)=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false);};
+    document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);
+  },[]);
+  const today=new Date();
+  const in7=new Date(today.getTime()+7*24*60*60*1000);
+  const upcoming=(db.sessions||[]).filter(s=>s.status==="scheduled"&&new Date(s.date)<=in7&&new Date(s.date)>=today);
+  const overduePay=(db.payments||[]).filter(p=>{
+    if(p.status!=="unpaid")return false;
+    const sess=(db.sessions||[]).find(s=>s.id===p.sessionId);
+    if(!sess||!sess.date)return false;
+    return(today-new Date(sess.date))>30*24*60*60*1000;
+  });
+  const lowStock=(db.inventory||[]).filter(i=>parseInt(i.qty||0)<=parseInt(i.minQty||0));
+  const total=upcoming.length+overduePay.length+lowStock.length;
+  return <div ref={ref} style={{position:"relative"}}>
+    <button onClick={()=>setOpen(!open)} style={{background:"var(--surface2)",border:"1px solid var(--border2)",borderRadius:10,padding:"8px 10px",cursor:"pointer",position:"relative",color:"var(--text)"}}>
+      {"\uD83D\uDD14"}
+      {total>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#ef4444",color:"#fff",fontSize:10,fontWeight:700,borderRadius:"50%",width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center"}}>{total}</span>}
+    </button>
+    {open&&<div style={{position:"absolute",right:0,top:"calc(100% + 8px)",width:300,background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:12,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",zIndex:200,overflow:"hidden"}}>
+      <div style={{padding:"10px 14px",borderBottom:"1px solid var(--border2)",fontWeight:700,fontSize:13,color:"var(--accent)"}}>Notifications {total===0&&"All clear!"}</div>
+      {upcoming.length>0&&<div style={{padding:"8px 14px",borderBottom:"1px solid var(--border2)"}}>
+        <div style={{fontSize:10,color:"var(--muted)",fontWeight:700,marginBottom:4}}>UPCOMING SESSIONS (7 DAYS)</div>
+        {upcoming.map(s=>{const sc=(db.schools||[]).find(x=>x.id===s.schoolId);return <div key={s.id} onClick={()=>{navigate("sessions");setOpen(false);}} style={{fontSize:12,padding:"4px 0",cursor:"pointer",color:"var(--text)"}}>-- {sc?.name||"?"} {fmtDate(s.date)}</div>;})}
+      </div>}
+      {overduePay.length>0&&<div style={{padding:"8px 14px",borderBottom:"1px solid var(--border2)"}}>
+        <div style={{fontSize:10,color:"var(--muted)",fontWeight:700,marginBottom:4}}>OVERDUE PAYMENTS (30+ DAYS)</div>
+        {overduePay.slice(0,5).map(p=>{const st=(db.students||[]).find(x=>x.id===p.studentId);return <div key={p.id} onClick={()=>{navigate("payments");setOpen(false);}} style={{fontSize:12,padding:"4px 0",cursor:"pointer",color:"#ef4444"}}>{st?.name||"?"} RM {parseFloat(p.amount||0).toFixed(2)}</div>;})}
+      </div>}
+      {lowStock.length>0&&<div style={{padding:"8px 14px"}}>
+        <div style={{fontSize:10,color:"var(--muted)",fontWeight:700,marginBottom:4}}>LOW INVENTORY</div>
+        {lowStock.slice(0,5).map(i=><div key={i.id} onClick={()=>{navigate("inventory");setOpen(false);}} style={{fontSize:12,padding:"4px 0",cursor:"pointer",color:"var(--amber)"}}>{i.name} {i.qty} {i.unit} left</div>)}
+      </div>}
+      {total===0&&<div style={{padding:"16px 14px",fontSize:12,color:"var(--muted)",textAlign:"center"}}>No alerts right now.</div>}
+    </div>}
+  </div>;
+}
 
 function App(){
   const {user,login,logout,authReady,inactiveWarning,autoLogoutReason,resetTimer}=useAuth();
@@ -3004,79 +3771,93 @@ function App(){
   const [pageFilter,setPageFilter]=useState(null);
   const [db,setDbState]=useState(getDB);
   const [sidebarOpen,setSidebarOpen]=useState(false);
+  const [sidebarCollapsed,setSidebarCollapsed]=useState(false);
+  const [isMobile,setIsMobile]=useState(()=>window.innerWidth<768);
   const refresh=useCallback(()=>setDbState({...getDB()}),[]);
-
-  useEffect(()=>{if(!localStorage.getItem(DB_KEY))saveDB(initialDB);refresh();},[]);
-
-  // While Firebase is determining whether a session already exists (e.g. on page
-  // reload), show a brief loading state instead of flashing the login screen.
+  useEffect(()=>{
+    if(!localStorage.getItem(DB_KEY))saveDB(initialDB);refresh();
+    const onResize=()=>setIsMobile(window.innerWidth<768);
+    window.addEventListener("resize",onResize);
+    return()=>window.removeEventListener("resize",onResize);
+  },[]);
   if(!authReady)return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"var(--bg)"}}>
-    <div style={{textAlign:"center"}}><div style={{fontSize:48,marginBottom:10}}>🦕</div><div style={{color:"var(--muted)",fontSize:13}}>Loading...</div></div>
+    <div style={{textAlign:"center"}}><div style={{fontSize:52,marginBottom:12}}>🦕</div><div style={{color:"var(--accent)",fontSize:14,fontWeight:600}}>HD Manager</div><div style={{color:"var(--muted)",fontSize:12,marginTop:4}}>Loading...</div></div>
   </div>;
-
   if(!user)return <LoginScreen onLogin={login} authReady={authReady} autoLogoutReason={autoLogoutReason}/>;
-
   const canAccess=(key)=>{const m=MENU.find(m=>m.key===key);if(!m||m.divider)return false;return userCanAccess(user,key);};
   const navigate=(key,filter)=>{if(canAccess(key)){setPage(key);setPageFilter(filter||null);setSidebarOpen(false);}};
   const goBackToDashboard=()=>navigate("dashboard");
+  const SB_W=sidebarCollapsed?56:220;
+  const navItems=MENU.filter(m=>m.divider?m.roles.includes(user.role):userCanAccess(user,m.key));
 
-  return <div style={{display:"flex",minHeight:"100vh"}}>
-    {sidebarOpen&&<div onClick={()=>setSidebarOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:90}}/>}
-    {/* Sidebar */}
-    <div style={{width:215,background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",position:"fixed",top:0,left:0,height:"100vh",zIndex:100,transform:sidebarOpen?"translateX(0)":"translateX(-100%)",transition:"transform 0.2s ease"}}>
-      <div style={{padding:"18px 14px 14px",borderBottom:"1px solid var(--border)"}}>
-        <div style={{fontSize:16,fontWeight:800,color:"var(--accent)",fontFamily:"Georgia,serif"}}>🦕 Happy Dino</div>
-        <div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>Xperience Camp</div>
+  return <div style={{display:"flex",minHeight:"100vh",background:"var(--bg)"}}>
+    {isMobile&&sidebarOpen&&<div onClick={()=>setSidebarOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:90}}/>}
+    <div style={{position:"fixed",top:0,left:0,height:"100vh",zIndex:100,
+      width:!isMobile&&sidebarCollapsed?56:220,
+      transition:"width 0.22s cubic-bezier(0.4,0,0.2,1),transform 0.22s ease",
+      transform:isMobile?(sidebarOpen?"translateX(0)":"translateX(-100%)"):"translateX(0)",
+      background:"var(--surface)",borderRight:"1px solid var(--border2)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <div style={{padding:(!isMobile&&sidebarCollapsed)?"14px 0":"14px",borderBottom:"1px solid var(--border2)",display:"flex",alignItems:"center",gap:8,minHeight:56,justifyContent:(!isMobile&&sidebarCollapsed)?"center":"flex-start"}}>
+        <div style={{fontSize:22,lineHeight:1,flexShrink:0}}>🦕</div>
+        {!(!isMobile&&sidebarCollapsed)&&<div><div style={{fontSize:14,fontWeight:800,color:"var(--accent)"}}>Happy Dino</div><div style={{fontSize:9,color:"var(--muted)",marginTop:1}}>Xperience Camp</div></div>}
       </div>
-      <div style={{flex:1,overflowY:"auto",padding:"6px 0"}}>
-        {MENU.filter(m=>m.divider ? m.roles.includes(user.role) : userCanAccess(user,m.key)).map(m=>m.divider
-          ? <div key={m.key} style={{padding:"10px 14px 4px",fontSize:10,fontWeight:700,color:"var(--muted)",letterSpacing:"0.08em",borderTop:"1px solid var(--border)",marginTop:6}}>{m.label}</div>
-          : <button key={m.key} onClick={()=>navigate(m.key)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"9px 14px",border:"none",background:page===m.key?"var(--surface2)":"transparent",cursor:"pointer",fontSize:13,fontWeight:page===m.key?700:400,color:page===m.key?"var(--accent)":"var(--text)",textAlign:"left",borderLeft:`3px solid ${page===m.key?"var(--accent)":"transparent"}`}}>
-            <span>{m.icon}</span>{m.label}
-          </button>)}
+      <div style={{flex:1,overflowY:"auto",overflowX:"hidden",padding:"4px 0"}}>
+        {navItems.map(m=>{
+          if(m.divider)return !sidebarCollapsed
+            ?<div key={m.key} style={{padding:"10px 14px 4px",fontSize:9,fontWeight:700,color:"var(--muted2)",letterSpacing:"0.1em",borderTop:"1px solid var(--border)",marginTop:4}}>{m.label}</div>
+            :<div key={m.key} style={{height:1,background:"var(--border)",margin:"6px 8px"}}/>;
+          const active=page===m.key;
+          const ic=ICON_COLORS[m.key]||"var(--muted)";
+          const collapsed=!isMobile&&sidebarCollapsed;
+          return <button key={m.key} onClick={()=>navigate(m.key)} title={collapsed?m.label:""}
+            style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:collapsed?"9px 0":"9px 14px",border:"none",
+              background:active?"linear-gradient(90deg,rgba(0,230,118,0.15),transparent)":"transparent",
+              cursor:"pointer",fontSize:13,fontWeight:active?700:400,
+              color:active?"var(--accent)":"#ffffff",textAlign:"left",
+              borderLeft:collapsed?"none":`3px solid ${active?"var(--accent)":"transparent"}`,
+              justifyContent:collapsed?"center":"flex-start",transition:"all 0.15s"}}>
+            <span style={{fontSize:16,color:active?"var(--accent)":ic,flexShrink:0,textAlign:"center",width:collapsed?"100%":22}}>{m.icon}</span>
+            {!collapsed&&<span style={{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{m.label}</span>}
+          </button>;
+        })}
       </div>
-      <div style={{padding:"12px 14px",borderTop:"1px solid var(--border)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
-          <span style={{fontSize:12,fontWeight:600}}>{user.name}</span>
-          <RoleBadge role={user.role}/>
-        </div>
-        <button onClick={logout} style={{...btn("danger"),width:"100%",padding:"8px 12px",fontSize:12}}>🚪 Logout</button>
-        <div style={{borderTop:"1px solid var(--border)",marginTop:10,paddingTop:10,display:"flex",flexDirection:"column",gap:6}}>
-          {/* User Manual — visible to ALL roles */}
-          <a href="https://github.com/calexcl/HD-Manager/raw/main/HD_Manager_User_Manual.docx"
-            target="_blank" rel="noopener noreferrer"
-            style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"var(--accent)",textDecoration:"none",padding:"4px 0"}}>
-            📖 <span>User Manual (EN/中文)</span>
-          </a>
-          {/* GitHub links — Admin only */}
+      <div style={{padding:(!isMobile&&sidebarCollapsed)?"8px 4px":"10px 12px",borderTop:"1px solid var(--border2)"}}>
+        {!(!isMobile&&sidebarCollapsed)&&<div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+          <div style={{width:28,height:28,borderRadius:"50%",background:"linear-gradient(135deg,var(--accent),var(--purple))",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#000",flexShrink:0}}>{user.name?.[0]?.toUpperCase()||"?"}</div>
+          <div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:700,color:"#ffffff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.name}</div><div style={{fontSize:10,color:"rgba(255,255,255,0.6)"}}>{user.role?.toUpperCase()}</div></div>
+        </div>}
+        <button onClick={logout} style={{...btn("danger"),width:"100%",padding:"8px 10px",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+          🚪{!(!isMobile&&sidebarCollapsed)&&" Logout"}
+        </button>
+        {!(!isMobile&&sidebarCollapsed)&&<div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>
+          <a href="https://github.com/calexcl/HD-Manager/raw/main/HD_Manager_User_Manual.docx" target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:5,fontSize:12,color:"var(--accent)",textDecoration:"none",padding:"3px 0"}}>📖 User Manual (EN/中文)</a>
           {user.role==="admin"&&<>
-            <a href="https://calexcl.github.io/HD-Manager/" target="_blank" rel="noopener noreferrer"
-              style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"var(--muted)",textDecoration:"none",padding:"4px 0"}}>
-              🌐 <span>Open App (GitHub Pages)</span>
-            </a>
-            <a href="https://github.com/calexcl/HD-Manager" target="_blank" rel="noopener noreferrer"
-              style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"var(--muted)",textDecoration:"none",padding:"4px 0"}}>
-              📦 <span>GitHub Repository</span>
-            </a>
+            <a href="https://calexcl.github.io/HD-Manager/" target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:"rgba(255,255,255,0.7)",textDecoration:"none",padding:"3px 0"}}>🌐 GitHub Pages</a>
+            <a href="https://github.com/calexcl/HD-Manager" target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:"rgba(255,255,255,0.7)",textDecoration:"none",padding:"3px 0"}}>📦 Repository</a>
           </>}
-        </div>
-        <div style={{fontSize:9,color:"var(--muted)",marginTop:6,textAlign:"center"}}>{APP_VERSION}</div>
+          <div style={{fontSize:8,color:"var(--muted2)",marginTop:4,textAlign:"center"}}>{APP_VERSION}</div>
+        </div>}
       </div>
     </div>
-    {/* Main */}
-    <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh"}}>
-      <div style={{background:"var(--surface)",borderBottom:"1px solid var(--border)",padding:"10px 16px",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:50,flexWrap:"wrap"}}>
-        <button onClick={()=>setSidebarOpen(!sidebarOpen)} style={{background:"none",border:"none",cursor:"pointer",fontSize:22,color:"var(--text)",padding:"2px 6px",lineHeight:1}}>☰</button>
-        <span style={{fontWeight:700,fontSize:15}}>{MENU.find(m=>m.key===page)?.label}</span>
-        {(user.role==="admin")&&<GlobalSearch db={db} onResultClick={navigate}/>}
+    <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh",minWidth:0,marginLeft:isMobile?0:(sidebarCollapsed?56:220),transition:"margin-left 0.22s cubic-bezier(0.4,0,0.2,1)"}}>
+      <div style={{background:"var(--surface)",borderBottom:"1px solid var(--border2)",padding:"0 16px",height:56,display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:50}}>
+        <button onClick={()=>{if(isMobile)setSidebarOpen(!sidebarOpen);else setSidebarCollapsed(!sidebarCollapsed);}}
+          style={{background:"var(--surface2)",border:"1px solid var(--border2)",borderRadius:8,padding:"8px 11px",cursor:"pointer",color:"var(--text)",fontSize:17,lineHeight:1,flexShrink:0}}>☰</button>
+        <div style={{fontWeight:700,fontSize:16,color:"var(--text)",flexShrink:0,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{MENU.find(m=>m.key===page)?.label||""}</div>
         <div style={{flex:1}}/>
-        <RoleBadge role={user.role}/>
+        <GlobalSearch db={db} onResultClick={navigate}/>
+        <NotificationBell db={db} navigate={navigate}/>
+        <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--surface2)",border:"1px solid var(--border2)",borderRadius:10,padding:"6px 12px",flexShrink:0}}>
+          <div style={{width:26,height:26,borderRadius:"50%",background:"linear-gradient(135deg,var(--accent),var(--purple))",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#000"}}>{user.name?.[0]?.toUpperCase()||"?"}</div>
+          <span style={{fontSize:13,fontWeight:600,color:"var(--text)",maxWidth:80,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.name}</span>
+          <RoleBadge role={user.role}/>
+        </div>
       </div>
-      {inactiveWarning&&<div style={{background:"#fef3c7",borderBottom:"1px solid #f59e0b",padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,fontSize:12,color:"#92400e"}}>
-        <span>⏰ You'll be signed out in 1 minute due to inactivity.</span>
-        <button onClick={resetTimer} style={{...btn("ghost"),fontSize:11,padding:"3px 10px",color:"#92400e",border:"1px solid #f59e0b"}}>Stay signed in</button>
+      {inactiveWarning&&<div style={{background:"rgba(245,158,11,0.12)",borderBottom:"1px solid rgba(245,158,11,0.3)",padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,fontSize:12,color:"var(--amber)"}}>
+        <span>You will be signed out in 1 minute due to inactivity.</span>
+        <button onClick={resetTimer} style={{...btn("ghost"),fontSize:11,padding:"3px 10px",color:"var(--amber)",border:"1px solid var(--amber)"}}>Stay signed in</button>
       </div>}
-      <div style={{flex:1,padding:"20px 16px",maxWidth:960,width:"100%",margin:"0 auto"}}>
+      <div style={{flex:1,padding:"20px 16px",width:"100%",maxWidth:980,margin:"0 auto"}}>
         {page==="dashboard"&&<Dashboard db={db} navigate={navigate} role={user.role}/>}
         {page==="schools"&&<Schools db={db} refresh={refresh} actor={user} onHome={goBackToDashboard} initialFilter={pageFilter}/>}
         {page==="students"&&<Students db={db} refresh={refresh} onHome={goBackToDashboard} actor={user}/>}
@@ -3098,6 +3879,7 @@ function App(){
         {page==="receipts"&&<Receipts db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
         {page==="creditNotes"&&<CreditNotes db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
         {page==="refunds"&&<Refunds db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+
       </div>
     </div>
   </div>;
