@@ -80,6 +80,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 
 /* Gradient backgrounds for hero */
 .dash-hero{background:linear-gradient(135deg,#070d1a 0%,#0d1a3a 50%,#0a1628 100%);position:relative;overflow:hidden}
 .dash-hero::before{content:'';position:absolute;top:-50%;right:-10%;width:400px;height:400px;background:radial-gradient(circle,rgba(0,230,118,0.04) 0%,transparent 70%);pointer-events:none}
+/* Search result highlight animation */
+@keyframes hdHighlight{0%{box-shadow:0 0 0 3px rgba(0,230,118,0.9),0 0 28px rgba(0,230,118,0.5)}60%{box-shadow:0 0 0 2px rgba(0,230,118,0.4),0 0 14px rgba(0,230,118,0.2)}100%{box-shadow:none}}
+.hd-highlight{animation:hdHighlight 2.2s ease-out forwards!important;border-color:rgba(0,230,118,0.7)!important}
 </style>
 </head>
 <body>
@@ -90,7 +93,7 @@ const {useState,useEffect,useCallback,useRef}=React;
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "HD System v.2026.07.27-07:00";
+const APP_VERSION = "HD System v.2026.07.27-12:30";
 // ── DARK NEON THEME CONSTANTS ──
 const inp={width:"100%",padding:"9px 12px",border:"1px solid var(--border2)",borderRadius:8,background:"var(--surface2)",color:"var(--text)",fontSize:15,boxSizing:"border-box",outline:"none"};
 const btn=(v="primary")=>({padding:"9px 18px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:600,fontSize:14,transition:"all 0.15s",
@@ -186,6 +189,74 @@ function logAction(actorRole,actorName,action,detail){
 
 // ── HELPERS ──
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+
+// ── SCROLL + HIGHLIGHT HOOK ──
+// After navigating to a page with a targetId, scroll to that record and
+// briefly add the .hd-highlight CSS class (green glow, 2.2s fade).
+// Also opens the edit modal for the record via optional openEdit callback.
+function useScrollHighlight(targetId, openEdit){
+  useEffect(()=>{
+    if(!targetId)return;
+    // Small delay to let the page render first
+    const t=setTimeout(()=>{
+      const el=document.getElementById("rec-"+targetId);
+      if(el){
+        el.scrollIntoView({behavior:"smooth",block:"center"});
+        el.classList.add("hd-highlight");
+        // Open detail/edit modal if callback provided
+        if(openEdit)openEdit(targetId);
+        // Remove class after animation completes
+        setTimeout(()=>el.classList.remove("hd-highlight"),2400);
+      }
+    },200);
+    return()=>clearTimeout(t);
+  },[targetId]);
+}
+
+// ── FUZZY NAME SIMILARITY ──
+// Returns a 0-1 score: 1 = identical, 0 = completely different.
+// Uses a simple token overlap approach suited for Malaysian names.
+function nameSimilarity(a, b){
+  if(!a||!b)return 0;
+  const tokenize=s=>s.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g," ").split(/\s+/).filter(Boolean);
+  const ta=new Set(tokenize(a)), tb=new Set(tokenize(b));
+  if(ta.size===0||tb.size===0)return 0;
+  let overlap=0;ta.forEach(t=>{if(tb.has(t))overlap++;});
+  return overlap/Math.max(ta.size,tb.size);
+}
+
+// ── DUPLICATE DETECTION ──
+// Returns array of potential duplicate matches for a given form against existing students.
+// Each match has: {student, reasons:[string], score:number}
+function findDuplicateStudents(form, allStudents, excludeId){
+  const matches=[];
+  const candidates=allStudents.filter(s=>s.id!==excludeId);
+  candidates.forEach(s=>{
+    const reasons=[];let score=0;
+    // IC match — strongest signal
+    const formIC=(form.ic||"").replace(/[-\s]/g,"").toLowerCase();
+    const sIC=(s.ic||"").replace(/[-\s]/g,"").toLowerCase();
+    if(formIC&&sIC&&formIC===sIC){reasons.push("Same IC/MyKid number");score+=1.0;}
+    // Exact name match
+    const formName=(form.name||"").trim().toLowerCase();
+    const sName=(s.name||"").trim().toLowerCase();
+    if(formName&&sName&&formName===sName){reasons.push("Identical name");score+=0.8;}
+    // Fuzzy name match (>70% similar)
+    else if(formName&&sName){
+      const sim=nameSimilarity(form.name,s.name);
+      if(sim>=0.7){reasons.push(`Similar name (${Math.round(sim*100)}% match)`);score+=sim*0.6;}
+    }
+    // Same name + same school
+    if(formName===sName&&form.schoolId&&s.schoolId===form.schoolId){reasons.push("Same school");score+=0.2;}
+    // Same parent phone (likely sibling, but worth flagging)
+    const fp=(form.parentPhone||"").replace(/\D/g,"");
+    const sp=(s.parentPhone||"").replace(/\D/g,"");
+    if(fp&&sp&&fp===sp&&fp.length>=8){reasons.push("Same parent phone");score+=0.3;}
+
+    if(score>=0.6&&reasons.length>0)matches.push({student:s,reasons,score});
+  });
+  return matches.sort((a,b)=>b.score-a.score).slice(0,5);
+}
 const fmt=(n)=>`RM ${parseFloat(n||0).toFixed(2)}`;
 const fmtDate=(d)=>d?new Date(d).toLocaleDateString("en-MY",{day:"2-digit",month:"short",year:"numeric"}):"—";
 const fmtDateTime=(d)=>d?new Date(d).toLocaleString("en-MY",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—";
@@ -936,35 +1007,30 @@ function GlobalSearch({db,onResultClick}){
     if(!q||q.length<2)return[];
     const ql=q.toLowerCase();
     const out=[];
-    // Schools — name, principal, phone, address
     (db.schools||[]).forEach(s=>{
       if([s.name,s.principal,s.phone,s.address,s.email].some(f=>f?.toLowerCase().includes(ql)))
-        out.push({type:"School",color:"purple",label:s.name,sub:`${s.principal||""}${s.phone?" · "+s.phone:""}`,nav:"schools"});
+        out.push({type:"School",color:"purple",label:s.name,sub:`${s.principal||""}${s.phone?" · "+s.phone:""}`,nav:"schools",id:s.id});
     });
-    // Students — name, Chinese name, IC, class, parent name, parent phone, emergency phone, bank
     (db.students||[]).forEach(s=>{
       const school=(db.schools||[]).find(x=>x.id===s.schoolId);
       if([s.name,s.nameChinese,s.ic,s.className,s.parentName,s.parentPhone,s.emergencyName,s.emergencyPhone,
         ...(s.parentPhoneExtra||[]),...(s.emergencyPhoneExtra||[])].some(f=>f?.toLowerCase().includes(ql)))
-        out.push({type:"Student",color:"blue",label:s.name+(s.nameChinese?` (${s.nameChinese})`:""),sub:`${s.className||""}${school?" · "+school.name:""}${s.ic?" · IC: "+s.ic:""}`,nav:"students"});
+        out.push({type:"Student",color:"blue",label:s.name+(s.nameChinese?` (${s.nameChinese})`:""),sub:`${s.className||""}${school?" · "+school.name:""}${s.ic?" · IC: "+s.ic:""}`,nav:"students",id:s.id});
     });
-    // Crew — name, Chinese name, NRIC, phone, email
     (db.crew||[]).forEach(c=>{
       if([c.name,c.nameChinese,c.nric,c.phone,c.email].some(f=>f?.toLowerCase().includes(ql)))
-        out.push({type:"Crew",color:"green",label:c.name+(c.nameChinese?` (${c.nameChinese})`:""),sub:`${c.phone||""}${c.nric?" · "+c.nric:""}`,nav:"crew"});
+        out.push({type:"Crew",color:"green",label:c.name+(c.nameChinese?` (${c.nameChinese})`:""),sub:`${c.phone||""}${c.nric?" · "+c.nric:""}`,nav:"crew",id:c.id});
     });
-    // Parents/Guardians — search returns the student, labelled as parent result
     (db.students||[]).forEach(s=>{
       if([s.parentName,s.parentPhone,...(s.parentPhoneExtra||[])].some(f=>f?.toLowerCase().includes(ql)))
-        if(!out.find(o=>o.nav==="students"&&o.label.startsWith(s.name)))
-          out.push({type:"Parent",color:"amber",label:s.parentName||"?",sub:`Parent of ${s.name} · ${s.parentPhone||""}`,nav:"students"});
+        if(!out.find(o=>o.id===s.id))
+          out.push({type:"Parent",color:"amber",label:s.parentName||"?",sub:`Parent of ${s.name} · ${s.parentPhone||""}`,nav:"students",id:s.id});
     });
-    // Sessions — school name, camp type, date
     (db.sessions||[]).forEach(s=>{
       const school=(db.schools||[]).find(x=>x.id===s.schoolId);
       const ct=(db.campTypes||[]).find(x=>x.id===s.campTypeId);
       if([school?.name,ct?.name,s.date].some(f=>f?.toLowerCase().includes(ql)))
-        out.push({type:"Session",color:"blue",label:`${school?.name||"?"} — ${ct?.name||"?"}`,sub:fmtDate(s.date),nav:"sessions"});
+        out.push({type:"Session",color:"blue",label:`${school?.name||"?"} — ${ct?.name||"?"}`,sub:fmtDate(s.date),nav:"sessions",id:s.id});
     });
     return out.slice(0,12);
   })();
@@ -977,7 +1043,8 @@ function GlobalSearch({db,onResultClick}){
       {q&&<button onClick={()=>{setQ("");setOpen(false);}} style={{background:"none",border:"none",cursor:"pointer",color:"var(--muted)",fontSize:14,padding:"0 2px"}}>✕</button>}
     </div>
     {open&&results.length>0&&<div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:10,boxShadow:"0 8px 32px rgba(0,0,0,0.4)",zIndex:300,maxHeight:360,overflowY:"auto"}}>
-      {results.map((r,i)=><div key={i} onMouseDown={e=>e.preventDefault()} onClick={()=>{onResultClick(r.nav);setQ("");setOpen(false);}}
+      {results.map((r,i)=><div key={i} onMouseDown={e=>e.preventDefault()}
+        onClick={()=>{onResultClick(r.nav,null,r.id);setQ("");setOpen(false);}}
         style={{padding:"8px 12px",cursor:"pointer",borderTop:i?"1px solid var(--border)":"none",fontSize:12,display:"flex",gap:8,alignItems:"flex-start"}}>
         <Badge label={r.type} color={typeColor[r.type]||"gray"}/>
         <div><div style={{fontWeight:600,color:"var(--text)"}}>{r.label}</div>{r.sub&&<div style={{fontSize:11,color:"var(--muted)",marginTop:1}}>{r.sub}</div>}</div>
@@ -1051,11 +1118,19 @@ function Schools({db,refresh,actor,onHome,initialFilter}){
 }
 
 // ── STUDENTS ──
-function Students({db,refresh,school,onBack,actor,onHome}){
+function Students({db,refresh,school,onBack,actor,onHome,targetId}){
   const [showModal,setShowModal]=useState(false);
   const [editing,setEditing]=useState(null);
   const [form,setForm]=useState({});
   const [revealBank,setRevealBank]=useState({});
+  const [dupMatches,setDupMatches]=useState([]); // potential duplicates found during add
+  const [dupChecked,setDupChecked]=useState(false);
+
+  // Scroll to + highlight + open edit modal when arriving from search
+  useScrollHighlight(targetId, (id)=>{
+    const s=(db.students||[]).find(x=>x.id===id);
+    if(s)openEdit(s);
+  });
 
   // ── FILTERS & SORT ──
   const [filterSchool,setFilterSchool]=useState(school?.id||"");
@@ -1174,12 +1249,21 @@ function Students({db,refresh,school,onBack,actor,onHome}){
     transition:"all 0.15s",whiteSpace:"nowrap",
   });
 
-  const openAdd=()=>{setForm({id:uid(),schoolId:school?.id||"",name:"",nameChinese:"",gender:"",ic:"",dob:"",address:"",className:"",phone:"",
+  const openAdd=()=>{
+    setDupMatches([]);setDupChecked(false);
+    setForm({id:uid(),schoolId:school?.id||"",name:"",nameChinese:"",gender:"",ic:"",dob:"",address:"",className:"",phone:"",
     parentName:"",parentRelation:"Mother",parentPhone:"",parentPhoneExtra:[],
     emergencyName:"",emergencyRelation:"Guardian",emergencyPhone:"",emergencyPhoneExtra:[],
     bankName:"",bankAccountNo:"",
     allergies:"",tshirtSize:"",notes:""});setEditing(null);setShowModal(true);};
-  const openEdit=(s)=>{setForm({parentPhoneExtra:[],emergencyPhoneExtra:[],...s});setEditing(s.id);setShowModal(true);};
+  const openEdit=(s)=>{setDupMatches([]);setDupChecked(false);setForm({parentPhoneExtra:[],emergencyPhoneExtra:[],...s});setEditing(s.id);setShowModal(true);};
+
+  // Run duplicate check when name or IC changes and user leaves the field
+  const checkDuplicates=(updatedForm)=>{
+    if(!updatedForm.name&&!updatedForm.ic)return;
+    const matches=findDuplicateStudents(updatedForm,allStudents,editing||"__new__");
+    setDupMatches(matches);setDupChecked(true);
+  };
   const save=()=>{const list=editing?allStudents.map(s=>s.id===editing?form:s):[...allStudents,form];setDB({students:list});logAction(actor.role,actor.name,editing?"EDIT_STUDENT":"ADD_STUDENT",form.name);refresh();setShowModal(false);};
   const del=(id)=>{const s=allStudents.find(x=>x.id===id);if(window.confirm("Delete student?")){setDB({students:allStudents.filter(s=>s.id!==id)});logAction(actor.role,actor.name,"DELETE_STUDENT",s?.name);refresh();}};
   const editable=canEdit(actor,"students");
@@ -1291,7 +1375,7 @@ function Students({db,refresh,school,onBack,actor,onHome}){
         const upcoming=regs.filter(r=>{const sess=(db.sessions||[]).find(ss=>ss.id===r.sessionId);return sess?.status==="scheduled";}).length;
         const siblings=allStudents.filter(st=>st.parentPhone===s.parentPhone&&st.id!==s.id);
         const isRevealed=revealBank[s.id];
-        return <div key={s.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 16px"}}>
+        return <div key={s.id} id={"rec-"+s.id} style={{background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:12,padding:"12px 16px",transition:"border-color 0.3s"}}>
           <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
             <div>
               <div style={{fontWeight:700,fontSize:14}}>{s.name}{s.nameChinese&&<span style={{fontWeight:400,color:"var(--muted)"}}> ({s.nameChinese})</span>} <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>· {s.className} · Age {calcAge(s.dob)}{s.gender&&` · ${s.gender}`}</span></div>
@@ -1311,10 +1395,37 @@ function Students({db,refresh,school,onBack,actor,onHome}){
       })}
     </div>}
     {showModal&&<Modal title={editing?"Edit Student":"Add Student"} onClose={()=>setShowModal(false)} wide>
+      {/* ── DUPLICATE WARNING PANEL ── */}
+      {!editing&&dupChecked&&dupMatches.length>0&&<div style={{background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.4)",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+        <div style={{fontWeight:700,fontSize:13,color:"var(--amber)",marginBottom:8}}>⚠ Possible duplicate{dupMatches.length>1?"s":""} found</div>
+        {dupMatches.map((m,i)=>{
+          const school=(db.schools||[]).find(x=>x.id===m.student.schoolId);
+          return <div key={i} style={{background:"var(--surface2)",borderRadius:8,padding:"8px 12px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
+            <div>
+              <div style={{fontWeight:600,fontSize:13}}>{m.student.name}{m.student.nameChinese&&<span style={{color:"var(--muted)",fontWeight:400}}> ({m.student.nameChinese})</span>}</div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>{m.student.className||"—"} · {school?.name||"—"} · IC: {m.student.ic||"—"}</div>
+              <div style={{fontSize:11,color:"var(--amber)",marginTop:3}}>{m.reasons.join(" · ")}</div>
+            </div>
+            <button onClick={()=>{setShowModal(false);openEdit(m.student);}} style={{...btn("ghost"),fontSize:11,padding:"4px 10px",border:"1px solid var(--amber)",color:"var(--amber)",whiteSpace:"nowrap"}}>
+              View existing →
+            </button>
+          </div>;
+        })}
+        <div style={{fontSize:11,color:"var(--muted)",marginTop:6}}>If this is a different student with the same name, tap Continue below to save anyway.</div>
+        <button onClick={()=>setDupMatches([])} style={{...btn("ghost"),fontSize:11,padding:"4px 10px",marginTop:6,border:"1px solid var(--muted)"}}>Continue adding anyway</button>
+      </div>}
+      {!editing&&dupChecked&&dupMatches.length===0&&<div style={{background:"rgba(0,230,118,0.06)",border:"1px solid rgba(0,230,118,0.2)",borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:12,color:"var(--accent)"}}>✓ No duplicates found</div>}
+
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}>
-        <Field label="Full Name"><input style={inp} value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
+        <Field label="Full Name">
+          <input style={inp} value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}
+            onBlur={e=>{const f={...form,name:e.target.value};checkDuplicates(f);}}/>
+        </Field>
         <Field label="Chinese Name"><input style={inp} value={form.nameChinese||""} onChange={e=>setForm({...form,nameChinese:e.target.value})} placeholder="中文姓名"/></Field>
-        <Field label="IC / MyKid No"><input style={inp} value={form.ic||""} onChange={e=>setForm({...form,ic:e.target.value})}/></Field>
+        <Field label="IC / MyKid No">
+          <input style={inp} value={form.ic||""} onChange={e=>setForm({...form,ic:e.target.value})}
+            onBlur={e=>{const f={...form,ic:e.target.value};checkDuplicates(f);}}/>
+        </Field>
         <Field label="Gender"><select style={inp} value={form.gender||""} onChange={e=>setForm({...form,gender:e.target.value})}>
           <option value="">Select</option><option>Male</option><option>Female</option></select></Field>
         <Field label="Date of Birth"><input type="date" style={inp} value={form.dob||""} onChange={e=>setForm({...form,dob:e.target.value})}/></Field>
@@ -1876,11 +1987,12 @@ function SessionExpenses({session,db,refresh,actor}){
 }
 
 // ── CREW ──
-function Crew({db,refresh,actor,onHome}){
+function Crew({db,refresh,actor,onHome,targetId}){
   const [showModal,setShowModal]=useState(false);const [editing,setEditing]=useState(null);const [form,setForm]=useState({});
   const crew=db.crew||[];
   const openAdd=()=>{setForm({id:uid(),name:"",nameChinese:"",gender:"",nric:"",dob:"",address:"",phone:"",email:"",rating:3,defaultFee:"",notes:""});setEditing(null);setShowModal(true);};
   const openEdit=(c)=>{setForm({...c});setEditing(c.id);setShowModal(true);};
+  useScrollHighlight(targetId,(id)=>{const c=crew.find(x=>x.id===id);if(c)openEdit(c);});
   const save=()=>{const list=editing?crew.map(c=>c.id===editing?form:c):[...crew,form];setDB({crew:list});logAction(actor.role,actor.name,editing?"EDIT_CREW":"ADD_CREW",form.name);refresh();setShowModal(false);};
   const del=(id)=>{const c=crew.find(x=>x.id===id);if(window.confirm("Delete?")){setDB({crew:crew.filter(c=>c.id!==id)});logAction(actor.role,actor.name,"DELETE_CREW",c?.name);refresh();}};
   const editable=canEdit(actor,"crew");
@@ -1892,7 +2004,7 @@ function Crew({db,refresh,actor,onHome}){
         const asgn=(db.crewAssignments||[]).filter(a=>a.crewId===c.id);
         const earned=asgn.reduce((a,x)=>a+parseFloat(x.fee||0),0);
         const unpaid=asgn.filter(a=>!a.paid).length;
-        return <div key={c.id} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"14px 16px"}}>
+        return <div key={c.id} id={"rec-"+c.id} style={{background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:12,padding:"14px 16px",transition:"border-color 0.3s"}}>
           <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
             <div>
               <div style={{fontWeight:700,fontSize:14}}>{c.name}{c.nameChinese&&<span style={{fontWeight:400,color:"var(--muted)"}}> ({c.nameChinese})</span>} <span style={{color:"#f59e0b"}}>{"★".repeat(Math.round(c.rating||0))}</span></div>
@@ -2582,6 +2694,113 @@ function PinPromptInput({onSubmit,onCancel}){
 }
 
 // ── SETTINGS ──
+// ── DUPLICATE FINDER ──
+function DuplicateFinder({db,refresh}){
+  const [groups,setGroups]=useState(null); // null=not scanned yet, []=clean
+  const [merging,setMerging]=useState(null); // {keepId, dupIds}
+  const [busy,setBusy]=useState(false);
+
+  const scan=()=>{
+    setBusy(true);
+    const students=db.students||[];
+    const seen=new Set();
+    const foundGroups=[];
+
+    students.forEach((s,i)=>{
+      if(seen.has(s.id))return;
+      const group=[s];
+      students.forEach((o,j)=>{
+        if(i>=j||seen.has(o.id))return;
+        const reasons=[];let score=0;
+        // IC match
+        const sIC=(s.ic||"").replace(/[-\s]/g,"").toLowerCase();
+        const oIC=(o.ic||"").replace(/[-\s]/g,"").toLowerCase();
+        if(sIC&&oIC&&sIC===oIC){reasons.push("Same IC/MyKid");score+=1.0;}
+        // Exact name
+        const sN=(s.name||"").trim().toLowerCase();
+        const oN=(o.name||"").trim().toLowerCase();
+        if(sN&&oN&&sN===oN){reasons.push("Identical name");score+=0.8;}
+        // Fuzzy name
+        else if(sN&&oN){const sim=nameSimilarity(s.name,o.name);if(sim>=0.75){reasons.push(`Similar name (${Math.round(sim*100)}%)`);score+=sim*0.6;}}
+        // Same parent phone
+        const sP=(s.parentPhone||"").replace(/\D/g,"");
+        const oP=(o.parentPhone||"").replace(/\D/g,"");
+        if(sP&&oP&&sP===oP&&sP.length>=8){reasons.push("Same parent phone");score+=0.3;}
+
+        if(score>=0.7){group.push({...o,_reasons:reasons,_score:score});seen.add(o.id);}
+      });
+      if(group.length>1){seen.add(s.id);foundGroups.push(group);}
+    });
+
+    setGroups(foundGroups);setBusy(false);
+  };
+
+  const merge=(keepId,dupIds)=>{
+    if(!window.confirm(`Merge ${dupIds.length} duplicate(s) into the kept record? All payments and registrations will be transferred. Duplicate records will be deleted. This cannot be undone.`))return;
+    setBusy(true);
+    const db2=getDB();
+    // Transfer all registrations from dups to kept
+    const regs=(db2.registrations||[]).map(r=>dupIds.includes(r.studentId)?{...r,studentId:keepId}:r);
+    // Transfer all payments from dups to kept
+    const pays=(db2.payments||[]).map(p=>dupIds.includes(p.studentId)?{...p,studentId:keepId}:p);
+    // Remove duplicate student records
+    const students=(db2.students||[]).filter(s=>!dupIds.includes(s.id));
+    setDB({students,registrations:regs,payments:pays});
+    logAction("admin","Admin","MERGE_DUPLICATES",`Kept ${keepId}, merged ${dupIds.join(",")}`);
+    refresh();
+    // Re-scan after merge
+    setTimeout(()=>{setBusy(false);scan();},300);
+  };
+
+  return <div style={{background:"var(--surface)",border:"1px solid var(--border2)",borderRadius:12,padding:18,marginTop:16}}>
+    <div style={{fontWeight:700,fontSize:13,marginBottom:4}}>🔍 Duplicate Student Finder</div>
+    <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>
+      Scans all student records for potential duplicates — by name, IC number, fuzzy name similarity, and parent phone. For each group found, choose which record to keep and merge the rest into it (registrations and payments transfer automatically).
+    </div>
+    <button onClick={scan} disabled={busy} style={{...btn("primary"),marginBottom:14,opacity:busy?0.6:1}}>
+      {busy?"Scanning...":"🔍 Scan for Duplicates"}
+    </button>
+
+    {groups===null&&<div style={{fontSize:12,color:"var(--muted)"}}>Tap Scan to check your student database.</div>}
+    {groups!==null&&groups.length===0&&<div style={{background:"rgba(0,230,118,0.08)",border:"1px solid rgba(0,230,118,0.2)",borderRadius:8,padding:"10px 14px",fontSize:13,color:"var(--accent)"}}>✓ No duplicates found — database looks clean!</div>}
+    {groups!==null&&groups.length>0&&<>
+      <div style={{fontSize:12,color:"var(--amber)",fontWeight:700,marginBottom:10}}>⚠ {groups.length} potential duplicate group{groups.length>1?"s":""} found</div>
+      {groups.map((group,gi)=>{
+        const keepId=group[0].id; // default keep = first record (usually oldest)
+        const dupIds=group.slice(1).map(s=>s.id);
+        return <div key={gi} style={{background:"var(--surface2)",border:"1px solid var(--border2)",borderRadius:10,padding:14,marginBottom:12}}>
+          <div style={{fontSize:11,color:"var(--muted)",fontWeight:700,marginBottom:8}}>GROUP {gi+1} — {group.length} records</div>
+          {group.map((s,si)=>{
+            const school=(db.schools||[]).find(x=>x.id===s.schoolId);
+            const regCount=(db.registrations||[]).filter(r=>r.studentId===s.id).length;
+            const isKeep=si===0;
+            return <div key={s.id} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"8px 10px",borderRadius:8,marginBottom:4,
+              background:isKeep?"rgba(0,230,118,0.08)":"rgba(239,68,68,0.05)",
+              border:isKeep?"1px solid rgba(0,230,118,0.3)":"1px solid rgba(239,68,68,0.2)"}}>
+              <div style={{fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,background:isKeep?"var(--accent)":"#ef4444",color:"#000",flexShrink:0,marginTop:2}}>
+                {isKeep?"KEEP":"MERGE"}
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:600,fontSize:13}}>{s.name}{s.nameChinese&&<span style={{color:"var(--muted)",fontWeight:400}}> ({s.nameChinese})</span>}</div>
+                <div style={{fontSize:11,color:"var(--muted)"}}>{s.className||"—"} · {school?.name||"—"} · IC: {s.ic||"—"} · Parent: {s.parentPhone||"—"}</div>
+                <div style={{fontSize:11,color:"var(--muted)"}}>DOB: {s.dob||"—"} · {regCount} registration{regCount!==1?"s":""}</div>
+                {s._reasons&&<div style={{fontSize:10,color:"var(--amber)",marginTop:2}}>{s._reasons.join(" · ")}</div>}
+              </div>
+            </div>;
+          })}
+          <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+            <button onClick={()=>merge(keepId,dupIds)} disabled={busy}
+              style={{...btn("primary"),fontSize:12,padding:"6px 14px",opacity:busy?0.5:1}}>
+              Merge — keep first, delete {dupIds.length} other{dupIds.length>1?"s":""}
+            </button>
+            <div style={{fontSize:11,color:"var(--muted)",alignSelf:"center"}}>Registrations & payments transfer automatically</div>
+          </div>
+        </div>;
+      })}
+    </>}
+  </div>;
+}
+
 function Settings({db,refresh,onHome}){
   const [form,setForm]=useState({...db.settings});
   const [sizeForm,setSizeForm]=useState(db.tshirtSizes||[]);
@@ -2626,6 +2845,7 @@ function Settings({db,refresh,onHome}){
       </Field>
       <button onClick={save} style={btn("primary")}>Save Settings</button>
     </div>
+    <DuplicateFinder db={db} refresh={refresh}/>
   </div>;
 }
 
@@ -3769,6 +3989,7 @@ function App(){
   const {user,login,logout,authReady,inactiveWarning,autoLogoutReason,resetTimer}=useAuth();
   const [page,setPage]=useState("dashboard");
   const [pageFilter,setPageFilter]=useState(null);
+  const [pageTargetId,setPageTargetId]=useState(null);
   const [db,setDbState]=useState(getDB);
   const [sidebarOpen,setSidebarOpen]=useState(false);
   const [sidebarCollapsed,setSidebarCollapsed]=useState(false);
@@ -3785,7 +4006,7 @@ function App(){
   </div>;
   if(!user)return <LoginScreen onLogin={login} authReady={authReady} autoLogoutReason={autoLogoutReason}/>;
   const canAccess=(key)=>{const m=MENU.find(m=>m.key===key);if(!m||m.divider)return false;return userCanAccess(user,key);};
-  const navigate=(key,filter)=>{if(canAccess(key)){setPage(key);setPageFilter(filter||null);setSidebarOpen(false);}};
+  const navigate=(key,filter,targetId)=>{if(canAccess(key)){setPage(key);setPageFilter(filter||null);setPageTargetId(targetId||null);setSidebarOpen(false);}};
   const goBackToDashboard=()=>navigate("dashboard");
   const SB_W=sidebarCollapsed?56:220;
   const navItems=MENU.filter(m=>m.divider?m.roles.includes(user.role):userCanAccess(user,m.key));
@@ -3860,10 +4081,10 @@ function App(){
       <div style={{flex:1,padding:"20px 16px",width:"100%",maxWidth:980,margin:"0 auto"}}>
         {page==="dashboard"&&<Dashboard db={db} navigate={navigate} role={user.role}/>}
         {page==="schools"&&<Schools db={db} refresh={refresh} actor={user} onHome={goBackToDashboard} initialFilter={pageFilter}/>}
-        {page==="students"&&<Students db={db} refresh={refresh} onHome={goBackToDashboard} actor={user}/>}
+        {page==="students"&&<Students db={db} refresh={refresh} onHome={goBackToDashboard} actor={user} targetId={pageTargetId}/>}
         {page==="campTypes"&&<CampTypes db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
         {page==="sessions"&&<Sessions db={db} refresh={refresh} initialFilter={pageFilter} actor={user} onHome={goBackToDashboard}/>}
-        {page==="crew"&&<Crew db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
+        {page==="crew"&&<Crew db={db} refresh={refresh} actor={user} onHome={goBackToDashboard} targetId={pageTargetId}/>}
         {page==="inventory"&&<Inventory db={db} refresh={refresh} actor={user} onHome={goBackToDashboard}/>}
         {page==="payments"&&<Payments db={db} refresh={refresh} initialFilter={pageFilter} role={user.role} actor={user} onHome={goBackToDashboard}/>}
         {page==="reports"&&<Reports db={db} onHome={goBackToDashboard}/>}
